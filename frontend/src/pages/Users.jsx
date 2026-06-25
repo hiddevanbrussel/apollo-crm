@@ -5,13 +5,13 @@ import { EmptyState, Field, Modal, PageLoader, Spinner } from "../components/ui"
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
-const EMPTY = { name: "", email: "", password: "", role: "user" };
+const EMPTY_FORM = { name: "", email: "", password: "", role: "user" };
 
 function RoleBadge({ role }) {
   const isAdmin = role === "admin";
   return (
     <span
-      className={`badge ${isAdmin ? "bg-purple-50 text-purple-700" : "bg-ink-100 text-ink-600"}`}
+      className={`badge ${isAdmin ? "bg-brand-50 text-brand-700" : "bg-ink-100 text-ink-600"}`}
     >
       {isAdmin ? "Admin" : "User"}
     </span>
@@ -23,16 +23,16 @@ export default function Users() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(EMPTY);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/users");
-      setUsers(data.items);
+      setUsers(data);
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -45,31 +45,28 @@ export default function Users() {
   }, [load]);
 
   const openCreate = () => {
-    setEditing(null);
-    setForm(EMPTY);
-    setShowForm(true);
+    setForm(EMPTY_FORM);
+    setShowCreate(true);
   };
 
   const openEdit = (u) => {
-    setEditing(u);
+    setEditUser(u);
     setForm({ name: u.name, email: u.email, password: "", role: u.role });
-    setShowForm(true);
   };
 
-  const save = async (e) => {
+  const closeModals = () => {
+    setShowCreate(false);
+    setEditUser(null);
+    setForm(EMPTY_FORM);
+  };
+
+  const createUser = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
-      if (editing) {
-        const payload = { name: form.name, email: form.email, role: form.role };
-        if (form.password) payload.password = form.password;
-        await api.put(`/users/${editing.id}`, payload);
-        toast.success("User updated.");
-      } else {
-        await api.post("/users", form);
-        toast.success("User created.");
-      }
-      setShowForm(false);
+      await api.post("/users", form);
+      toast.success("User created.");
+      closeModals();
       load();
     } catch (err) {
       toast.error(apiError(err));
@@ -78,8 +75,26 @@ export default function Users() {
     }
   };
 
-  const remove = async (u) => {
-    if (!confirm(`Delete user ${u.name}?`)) return;
+  const updateUser = async (e) => {
+    e.preventDefault();
+    if (!editUser) return;
+    setSaving(true);
+    try {
+      const payload = { name: form.name, email: form.email, role: form.role };
+      if (form.password) payload.password = form.password;
+      await api.put(`/users/${editUser.id}`, payload);
+      toast.success("User updated.");
+      closeModals();
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteUser = async (u) => {
+    if (!confirm(`Delete user ${u.email}?`)) return;
     try {
       await api.delete(`/users/${u.id}`);
       toast.success("User deleted.");
@@ -96,114 +111,142 @@ export default function Users() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-ink-900">Users</h1>
-          <p className="text-sm text-ink-500">
-            Manage who can access Apollo CRM. Admins configure integrations; users enrich companies and contacts.
-          </p>
+          <p className="mt-1 text-sm text-ink-500">Manage who can access Apollo CRM.</p>
         </div>
         <button className="btn-primary" onClick={openCreate}>
-          <Icon.Plus width={18} height={18} /> New user
+          <Icon.Plus width={18} height={18} /> Add user
         </button>
       </div>
 
-      <div className="card overflow-hidden">
-        {users.length === 0 ? (
-          <EmptyState title="No users yet" description="Create the first user account." />
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-ink-100 bg-ink-50/80 text-xs font-semibold uppercase tracking-wide text-ink-400">
+      {users.length === 0 ? (
+        <EmptyState title="No users yet" description="Create the first user account." />
+      ) : (
+        <div className="card overflow-hidden">
+          <table className="w-full">
+            <thead className="border-b border-ink-100 bg-ink-50/50">
               <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="table-th">Name</th>
+                <th className="table-th">Email</th>
+                <th className="table-th">Role</th>
+                <th className="table-th">Created</th>
+                <th className="table-th text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-ink-50/50">
-                  <td className="px-4 py-3 font-medium text-ink-900">{u.name}</td>
-                  <td className="px-4 py-3 text-ink-600">{u.email}</td>
-                  <td className="px-4 py-3">
+                <tr key={u.id} className="hover:bg-ink-50/60">
+                  <td className="table-td font-medium text-ink-900">{u.name}</td>
+                  <td className="table-td text-ink-600">{u.email}</td>
+                  <td className="table-td">
                     <RoleBadge role={u.role} />
                   </td>
-                  <td className="px-4 py-3 text-ink-500">
+                  <td className="table-td text-ink-500">
                     {new Date(u.created_at).toLocaleDateString()}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="table-td text-right">
                     <div className="flex justify-end gap-1">
-                      <button className="btn-ghost px-2 py-1.5" onClick={() => openEdit(u)} title="Edit">
-                        <Icon.Edit width={16} height={16} />
+                      <button className="btn-ghost px-2 py-1.5 text-sm" onClick={() => openEdit(u)}>
+                        Edit
                       </button>
-                      <button
-                        className="btn-ghost px-2 py-1.5 text-red-600 hover:bg-red-50"
-                        onClick={() => remove(u)}
-                        disabled={u.id === currentUser?.id}
-                        title={u.id === currentUser?.id ? "Cannot delete yourself" : "Delete"}
-                      >
-                        <Icon.Trash width={16} height={16} />
-                      </button>
+                      {u.id !== currentUser?.id && (
+                        <button
+                          className="btn-ghost px-2 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                          onClick={() => deleteUser(u)}
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
 
       <Modal
-        open={showForm}
-        onClose={() => setShowForm(false)}
-        title={editing ? "Edit user" : "New user"}
+        open={showCreate}
+        onClose={closeModals}
+        title="Add user"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={closeModals}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={createUser} disabled={saving}>
+              {saving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />}
+              Create
+            </button>
+          </>
+        }
       >
-        <form onSubmit={save} className="space-y-4">
-          <Field label="Name" required>
-            <input
-              className="input"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-            />
+        <form onSubmit={createUser} className="space-y-4">
+          <Field label="Name">
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </Field>
-          <Field label="Email" required>
-            <input
-              type="email"
-              className="input"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              required
-            />
+          <Field label="Email">
+            <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
           </Field>
-          <Field label={editing ? "New password (optional)" : "Password"} required={!editing}>
+          <Field label="Password">
+            <input type="password" className="input" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+          </Field>
+          <div>
+            <label className="label">Role</label>
+            <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+            <p className="mt-1 text-xs text-ink-400">
+              Admins can manage settings, users, and Apollo enrichment.
+            </p>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!editUser}
+        onClose={closeModals}
+        title="Edit user"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={closeModals}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={updateUser} disabled={saving}>
+              {saving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />}
+              Save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={updateUser} className="space-y-4">
+          <Field label="Name">
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </Field>
+          <Field label="Email">
+            <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+          </Field>
+          <Field label="New password">
             <input
               type="password"
               className="input"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              required={!editing}
-              minLength={6}
-              autoComplete="new-password"
+              placeholder="Leave blank to keep current"
             />
           </Field>
-          <Field label="Role">
+          <div>
+            <label className="label">Role</label>
             <select
               className="input"
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
+              disabled={editUser?.id === currentUser?.id}
             >
-              <option value="user">User — companies & contacts, Apollo enrich</option>
-              <option value="admin">Admin — settings, users, all features</option>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
             </select>
-          </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>
-              Cancel
-            </button>
-            <button type="submit" className="btn-primary" disabled={saving}>
-              {saving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />}
-              {editing ? "Save" : "Create"}
-            </button>
           </div>
         </form>
       </Modal>

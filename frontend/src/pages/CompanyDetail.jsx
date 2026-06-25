@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
-import { useAuth } from "../context/AuthContext";
 import { CompanyLogo, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 
 const EDIT_FIELDS = [
   "name",
@@ -60,12 +60,11 @@ export default function CompanyDetail() {
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
-    if (!isAdmin) return;
     api
-      .get("/settings/groq")
-      .then((res) => setGroqReady(res.data.enabled && res.data.configured))
+      .get("/settings/status")
+      .then((res) => setGroqReady(res.data.groq.enabled && res.data.groq.configured))
       .catch(() => setGroqReady(false));
-  }, [isAdmin]);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -206,17 +205,16 @@ export default function CompanyDetail() {
           <button className="btn-secondary" onClick={openEdit}>
             <Icon.Edit width={18} height={18} /> Edit
           </button>
+          <button
+            className="btn-secondary"
+            onClick={findDomain}
+            disabled={findingDomain || !groqReady}
+            title={groqReady ? "Find the domain via Groq (AI web search)" : "Groq is off — enable it in Settings"}
+          >
+            {findingDomain ? <Spinner className="h-4 w-4" /> : <Icon.Wand width={18} height={18} />}
+            Find domain
+          </button>
           {isAdmin && (
-            <button
-              className="btn-secondary"
-              onClick={findDomain}
-              disabled={findingDomain || !groqReady}
-              title={groqReady ? "Find the domain via Groq (AI web search)" : "Groq is off — enable it in Settings"}
-            >
-              {findingDomain ? <Spinner className="h-4 w-4" /> : <Icon.Wand width={18} height={18} />}
-              Find domain
-            </button>
-          )}
           <button
             className="btn-primary"
             onClick={enrich}
@@ -226,6 +224,7 @@ export default function CompanyDetail() {
             {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Sparkles width={18} height={18} />}
             Enrich via Apollo
           </button>
+          )}
         </div>
       </div>
 
@@ -282,6 +281,7 @@ export default function CompanyDetail() {
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-ink-500">{contacts.length} contact(s) linked</p>
+                {isAdmin && (
                 <button
                   className="btn-secondary"
                   onClick={findPeople}
@@ -297,6 +297,7 @@ export default function CompanyDetail() {
                   {findingPeople ? <Spinner className="h-4 w-4" /> : <Icon.Users width={18} height={18} />}
                   Find people via Apollo
                 </button>
+                )}
               </div>
               {contacts.length === 0 ? (
                 <p className="py-8 text-center text-sm text-ink-400">
@@ -335,7 +336,7 @@ export default function CompanyDetail() {
                           <td className="table-td">{ct.email || "—"}</td>
                           <td className="table-td"><StatusBadge status={ct.enrichment_status} /></td>
                           <td className="table-td text-right">
-                            {ct.apollo_id && (
+                            {isAdmin && ct.apollo_id && (
                               <button
                                 className="btn-ghost px-2 py-1 text-sm"
                                 onClick={() => completePerson(ct.id)}

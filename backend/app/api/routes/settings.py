@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
 from app.models import User
 from app.schemas.settings import (
@@ -11,6 +11,8 @@ from app.schemas.settings import (
     GroqSettingsOut,
     GroqSettingsUpdate,
     GroqTestResult,
+    IntegrationServiceStatus,
+    IntegrationsStatusOut,
     LogokitSettingsOut,
     LogokitSettingsUpdate,
     LogokitTestResult,
@@ -43,8 +45,23 @@ def _to_out(db: Session, row) -> ApolloSettingsOut:
     return out
 
 
+@router.get("/status", response_model=IntegrationsStatusOut)
+def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Read-only integration flags for UI (no secrets). Available to all signed-in users."""
+    apollo = get_or_create_settings(db)
+    groq = get_or_create_groq_settings(db)
+    logokit = get_or_create_logokit_settings(db)
+    return IntegrationsStatusOut(
+        apollo=IntegrationServiceStatus(enabled=apollo.enabled, configured=is_configured(apollo)),
+        groq=IntegrationServiceStatus(enabled=groq.enabled, configured=groq_is_configured(groq)),
+        logokit=IntegrationServiceStatus(
+            enabled=logokit.enabled, configured=logokit_is_configured(logokit)
+        ),
+    )
+
+
 @router.get("/apollo", response_model=ApolloSettingsOut)
-def get_apollo_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def get_apollo_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     row = get_or_create_settings(db)
     return _to_out(db, row)
 
@@ -53,7 +70,7 @@ def get_apollo_settings(db: Session = Depends(get_db), _: User = Depends(get_cur
 def update_apollo_settings(
     payload: ApolloSettingsUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_admin_user),
 ):
     row = get_or_create_settings(db)
     if payload.clear_api_key:
@@ -70,7 +87,7 @@ def update_apollo_settings(
 
 
 @router.post("/apollo/test", response_model=ApolloTestResult)
-def test_apollo_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def test_apollo_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     row = get_or_create_settings(db)
     if not is_configured(row):
         return ApolloTestResult(success=False, message="No Apollo API key configured.", status_code=400)
@@ -90,7 +107,7 @@ def _groq_to_out(row) -> GroqSettingsOut:
 
 
 @router.get("/groq", response_model=GroqSettingsOut)
-def get_groq_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def get_groq_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     return _groq_to_out(get_or_create_groq_settings(db))
 
 
@@ -98,7 +115,7 @@ def get_groq_settings(db: Session = Depends(get_db), _: User = Depends(get_curre
 def update_groq_settings(
     payload: GroqSettingsUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_admin_user),
 ):
     row = get_or_create_groq_settings(db)
     if payload.clear_api_key:
@@ -117,7 +134,7 @@ def update_groq_settings(
 
 
 @router.post("/groq/test", response_model=GroqTestResult)
-def test_groq_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def test_groq_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     row = get_or_create_groq_settings(db)
     if not groq_is_configured(row):
         return GroqTestResult(success=False, message="No Groq API key configured.", status_code=400)
@@ -137,7 +154,7 @@ def _logokit_to_out(row) -> LogokitSettingsOut:
 
 
 @router.get("/logokit", response_model=LogokitSettingsOut)
-def get_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def get_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     return _logokit_to_out(get_or_create_logokit_settings(db))
 
 
@@ -145,7 +162,7 @@ def get_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_cu
 def update_logokit_settings(
     payload: LogokitSettingsUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_admin_user),
 ):
     row = get_or_create_logokit_settings(db)
     if payload.clear_token:
@@ -162,7 +179,7 @@ def update_logokit_settings(
 
 
 @router.post("/logokit/test", response_model=LogokitTestResult)
-def test_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
+def test_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     row = get_or_create_logokit_settings(db)
     if not logokit_is_configured(row):
         return LogokitTestResult(success=False, message="No Logokit token configured.", status_code=400)

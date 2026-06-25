@@ -2,31 +2,30 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_admin_user
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import User
-from app.schemas.auth import UserCreate, UserList, UserOut, UserUpdate
+from app.schemas.auth import UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-
-def _count_admins(db: Session) -> int:
-    return db.scalar(select(func.count()).select_from(User).where(User.role == "admin")) or 0
+VALID_ROLES = frozenset({"admin", "user"})
 
 
-@router.get("", response_model=UserList)
-def list_users(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
-    users = db.execute(select(User).order_by(User.name)).scalars().all()
-    return UserList(items=[UserOut.model_validate(u) for u in users], total=len(users))
+@router.get("", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    users = db.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+    return [UserOut.model_validate(u) for u in users]
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def create_user(
     payload: UserCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_admin_user),
 ):
+    role = payload.role if payload.role in VALID_ROLES else "user"
     existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
     if existing:
         raise HTTPException(
@@ -37,7 +36,7 @@ def create_user(
         name=payload.name,
         email=payload.email,
         password_hash=hash_password(payload.password),
-        role=payload.role,
+        role=role,
     )
     db.add(user)
     db.commit()
@@ -50,7 +49,7 @@ def update_user(
     user_id: int,
     payload: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    admin: User = Depends(get_admin_user),
 ):
     user = db.get(User, user_id)
     if not user:
@@ -60,17 +59,22 @@ def update_user(
     if "email" in data and data["email"] != user.email:
         clash = db.execute(select(User).where(User.email == data["email"])).scalar_one_or_none()
         if clash:
-            raise HTTPException(status_code=409, detail="A user with this email already exists.")
+            raise HTTPException(status_code=409, detail="Email is already in use.")
+        user.email = data["email"]
 
-    if data.get("role") == "user" and user.role == "admin":
-        if _count_admins(db) <= 1:
-            raise HTTPException(status_code=400, detail="Cannot demote the last admin.")
+    if "name" in data:
+        user.name = data["name"]
 
-    if "password" in data:
-        user.password_hash = hash_password(data.pop("password"))
+    if "role" in data:
+        new_role = data["role"]
+        if new_role not in VALID_ROLES:
+            raise HTTPException(status_code=400, detail="Role must be 'admin' or 'user'.")
+        if user.id == admin.id and new_role != "admin":
+            raise HTTPException(status_code=400, detail="You cannot remove your own admin role.")
+        user.role = new_role
 
-    for key, value in data.items():
-        setattr(user, key, value)
+    if "password" in data and data["password"]:
+        user.password_hash = hash_password(data["password"])
 
     db.commit()
     db.refresh(user)
@@ -81,17 +85,17 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    admin: User = Depends(get_admin_user),
 ):
-    if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
-
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
 
-    if user.role == "admin" and _count_admins(db) <= 1:
-        raise HTTPException(status_code=400, detail="Cannot delete the last admin.")
+    admin_count = db.scalar(select(func.count()).select_from(User).where(User.role == "admin"))
+    if user.role == "admin" and admin_count <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last admin account.")
 
     db.delete(user)
     db.commit()

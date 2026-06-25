@@ -4,6 +4,7 @@ import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 
 function Detail({ label, value, href, icon: IconCmp }) {
   return (
@@ -28,6 +29,7 @@ export default function ContactDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { isAdmin } = useAuth();
   const [contact, setContact] = useState(null);
   const [enriching, setEnriching] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -112,7 +114,7 @@ export default function ContactDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {contact.apollo_id && (
+          {isAdmin && contact.apollo_id && (
             <button
               className="btn-secondary"
               onClick={completeInfo}
@@ -123,6 +125,7 @@ export default function ContactDetail() {
               {contact.enrichment_status === "enriched" ? "Refresh info" : "Get complete info"}
             </button>
           )}
+          {isAdmin && (
           <button
             className="btn-primary"
             onClick={enrich}
@@ -132,6 +135,7 @@ export default function ContactDetail() {
             {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Sparkles width={18} height={18} />}
             Enrich via Apollo
           </button>
+          )}
         </div>
       </div>
 

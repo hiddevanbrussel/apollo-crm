@@ -29,28 +29,6 @@ HEADER_ALIASES: dict[str, str] = {
     "website_url": "domain",
 }
 
-# Spreadsheet placeholders that must not be stored as a unique company domain.
-INVALID_DOMAIN_VALUES = frozenset(
-    {
-        "",
-        "-",
-        "—",
-        "n/a",
-        "na",
-        "n.a.",
-        "niet",
-        "geen",
-        "none",
-        "null",
-        "unknown",
-        "onbekend",
-        "no",
-        "nee",
-        "tbd",
-        "nvt",
-    }
-)
-
 
 class ImportParseError(Exception):
     pass
@@ -61,33 +39,6 @@ def canonical_field(header: object) -> str | None:
     if header is None:
         return None
     return HEADER_ALIASES.get(str(header).strip().lower())
-
-
-def normalize_domain(value: str | None) -> str | None:
-    """Return a clean domain or None when the cell is empty or a placeholder."""
-    if value is None:
-        return None
-    raw = str(value).strip()
-    if not raw:
-        return None
-
-    lower = raw.lower()
-    if lower in INVALID_DOMAIN_VALUES:
-        return None
-
-    # Allow bare domains and URLs pasted from spreadsheets.
-    candidate = lower
-    for prefix in ("https://", "http://"):
-        if candidate.startswith(prefix):
-            candidate = candidate[len(prefix) :]
-            break
-    candidate = candidate.split("/")[0].split("?")[0].strip()
-    if candidate.startswith("www."):
-        candidate = candidate[4:]
-
-    if not candidate or candidate in INVALID_DOMAIN_VALUES or "." not in candidate:
-        return None
-    return candidate
 
 
 def _has_name_column(headers) -> bool:

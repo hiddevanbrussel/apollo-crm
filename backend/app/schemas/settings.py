@@ -80,3 +80,14 @@ class LogokitTestResult(BaseModel):
     success: bool
     message: str
     status_code: int | None = None
+
+
+class IntegrationServiceStatus(BaseModel):
+    enabled: bool
+    configured: bool
+
+
+class IntegrationsStatusOut(BaseModel):
+    apollo: IntegrationServiceStatus
+    groq: IntegrationServiceStatus
+    logokit: IntegrationServiceStatus

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -10,14 +11,14 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, max_length=128)
-    role: str = Field(default="user", pattern="^(admin|user)$")
+    role: Literal["admin", "user"] = "user"
 
 
 class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr | None = None
-    role: str | None = Field(default=None, pattern="^(admin|user)$")
     password: str | None = Field(default=None, min_length=6, max_length=128)
+    role: Literal["admin", "user"] | None = None
 
 
 class UserLogin(BaseModel):
@@ -31,11 +32,6 @@ class UserOut(UserBase):
     id: int
     role: str
     created_at: datetime
-
-
-class UserList(BaseModel):
-    items: list[UserOut]
-    total: int
 
 
 class Token(BaseModel):

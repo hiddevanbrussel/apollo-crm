@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
 from app.models import Company, Contact, EnrichmentLog, User
 from app.schemas.contact import ContactCreate, ContactList, ContactOut, ContactUpdate
@@ -144,7 +144,7 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
 
 
 @router.post("/{contact_id}/complete", response_model=ContactOut)
-def fetch_complete_person(contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def fetch_complete_person(contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     """Fetch a person's complete profile via Apollo GET /api/v1/people/{id}.
 
     Requires the contact to carry an Apollo person id (set by "Find people").
@@ -217,7 +217,7 @@ def fetch_complete_person(contact_id: int, db: Session = Depends(get_db), _: Use
 
 
 @router.post("/{contact_id}/enrich", response_model=ContactOut)
-def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
     contact = db.get(Contact, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found.")

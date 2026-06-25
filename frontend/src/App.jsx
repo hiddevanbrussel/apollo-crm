@@ -44,10 +44,24 @@ export default function App() {
         <Route path="companies/:id" element={<CompanyDetail />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="contacts/:id" element={<ContactDetail />} />
-        <Route path="apollo" element={<AdminRoute><ApolloSearch /></AdminRoute>} />
-        <Route path="research" element={<AdminRoute><MarketResearch /></AdminRoute>} />
-        <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
-        <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
+        <Route path="apollo" element={<ApolloSearch />} />
+        <Route path="research" element={<MarketResearch />} />
+        <Route
+          path="settings"
+          element={
+            <AdminRoute>
+              <Settings />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="users"
+          element={
+            <AdminRoute>
+              <Users />
+            </AdminRoute>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -36,11 +36,7 @@ def seed() -> None:
             db.add(admin)
             logger.info("Created admin user %s", settings.ADMIN_EMAIL)
         else:
-            if admin.role != "admin":
-                admin.role = "admin"
-                logger.info("Promoted %s to admin.", settings.ADMIN_EMAIL)
-            else:
-                logger.info("Admin user already exists, skipping.")
+            logger.info("Admin user already exists, skipping.")
 
         # Apollo settings row
         apollo_row = db.execute(select(ApolloSettings).limit(1)).scalar_one_or_none()

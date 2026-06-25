@@ -4,9 +4,8 @@ import { useAuth } from "../context/AuthContext";
 import AiAssistantWidget from "./AiAssistantWidget";
 import { Icon } from "./icons";
 
-const NAV_MAIN = [{ to: "/", label: "Dashboard", icon: Icon.Dashboard, end: true }];
-
-const NAV_MAIN_ADMIN = [
+const NAV_MAIN = [
+  { to: "/", label: "Dashboard", icon: Icon.Dashboard, end: true },
   { to: "/apollo", label: "Apollo Search", icon: Icon.Search },
   { to: "/research", label: "Market Research", icon: Icon.Compass },
 ];
@@ -16,15 +15,17 @@ const NAV_RECORDS = [
   { to: "/contacts", label: "Contacts", icon: Icon.Users },
 ];
 
-const NAV_FOOTER_ADMIN = [
-  { to: "/users", label: "Users", icon: Icon.Users },
-  { to: "/settings", label: "Settings", icon: Icon.Settings },
+const NAV_FOOTER = [
+  { to: "/users", label: "Users", icon: Icon.Users, adminOnly: true },
+  { to: "/settings", label: "Settings", icon: Icon.Settings, adminOnly: true },
 ];
 
-function NavGroup({ items }) {
+function NavGroup({ items, isAdmin }) {
+  const visible = items.filter((item) => !item.adminOnly || isAdmin);
+  if (!visible.length) return null;
   return (
     <div className="space-y-0.5">
-      {items.map((item) => (
+      {visible.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -73,7 +74,6 @@ export default function Layout() {
 
           <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-2">
             <NavGroup items={NAV_MAIN} />
-            {isAdmin && <NavGroup items={NAV_MAIN_ADMIN} />}
             <div>
               <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
                 Records
@@ -83,11 +83,11 @@ export default function Layout() {
           </nav>
 
           <div className="space-y-3 px-3 pb-3">
-            {isAdmin && <NavGroup items={NAV_FOOTER_ADMIN} />}
+            <NavGroup items={NAV_FOOTER} isAdmin={isAdmin} />
 
             <div className="rounded-xl border border-ink-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between text-xs text-ink-500">
-                <span>Self-hosted</span>
+                <span>{isAdmin ? "Administrator" : "User"}</span>
                 <span className="badge bg-green-50 text-green-700">Active</span>
               </div>
               <p className="text-[11px] leading-relaxed text-ink-400">
@@ -102,11 +102,6 @@ export default function Layout() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-ink-900">{user?.name}</p>
                 <p className="truncate text-xs text-ink-400">{user?.email}</p>
-                {user?.role && (
-                  <p className="truncate text-[10px] font-medium uppercase tracking-wide text-ink-400">
-                    {user.role === "admin" ? "Administrator" : "User"}
-                  </p>
-                )}
               </div>
               <button className="btn-ghost px-2 py-1.5" onClick={logout} title="Log out">
                 <Icon.Logout width={18} height={18} />
@@ -141,7 +136,7 @@ export default function Layout() {
         </div>
       </div>
 
-      {isAdmin && <AiAssistantWidget />}
+      <AiAssistantWidget />
     </div>
   );
 }

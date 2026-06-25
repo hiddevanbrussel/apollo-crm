@@ -38,6 +38,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
     expose:
       - "8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m app.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
     build:
@@ -48,8 +52,7 @@ services:
     container_name: apollo_crm_frontend
     restart: unless-stopped
     depends_on:
-      backend:
-        condition: service_started
+      - backend
     ports:
       - "${FRONTEND_PORT:-8080}:80"
 

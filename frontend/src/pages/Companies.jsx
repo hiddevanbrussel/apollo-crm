@@ -4,6 +4,7 @@ import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
+import { useAuth } from "../context/AuthContext";
 
 const EMPTY = { name: "", domain: "", website: "", industry: "", country: "", city: "", phone: "", employee_count: "", description: "" };
 
@@ -43,6 +44,7 @@ function FilterSection({ title, icon: IconCmp, active, defaultOpen = false, chil
 
 export default function Companies() {
   const toast = useToast();
+  const { isAdmin } = useAuth();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -272,7 +274,7 @@ export default function Companies() {
           </button>
         </div>
 
-        {selected.size > 0 && (
+        {selected.size > 0 && isAdmin && (
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-brand-50/60 px-4 py-3">
             <span className="text-sm font-medium text-ink-700">{selected.size} selected</span>
             <div className="flex items-center gap-2">
@@ -514,6 +516,7 @@ export default function Companies() {
             />
           </div>
 
+          {isAdmin && (
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-100 p-3 hover:bg-ink-50/60">
             <input
               type="checkbox"
@@ -529,6 +532,7 @@ export default function Companies() {
               </span>
             </span>
           </label>
+          )}
 
           {importResult && (
             <div className="space-y-2 rounded-lg border border-ink-100 p-4">

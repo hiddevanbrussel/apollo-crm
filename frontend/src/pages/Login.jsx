@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
   const { user, login } = useAuth();
-  const [form, setForm] = useState({ email: "", password: "" });
+  const [form, setForm] = useState({ email: "admin@apollo-crm.com", password: "admin123" });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -55,7 +55,6 @@ export default function Login() {
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 required
-                autoComplete="email"
               />
             </div>
             <div>
@@ -66,7 +65,6 @@ export default function Login() {
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 required
-                autoComplete="current-password"
               />
             </div>
             <button type="submit" className="btn-primary w-full" disabled={loading}>
