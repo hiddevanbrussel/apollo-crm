@@ -1,0 +1,33 @@
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ResearchCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    query_type: str  # 'people' | 'organizations'
+    criteria: dict[str, Any] = {}
+    max_records: int = Field(default=500, ge=1, le=2000)
+
+
+class ResearchSearchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    query_type: str
+    criteria: dict
+    result_count: int
+    total_available: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchSearchList(BaseModel):
+    items: list[ResearchSearchOut]
+
+
+class ResearchDetail(ResearchSearchOut):
+    columns: list[str] = []
+    rows: list[dict[str, Any]] = []
