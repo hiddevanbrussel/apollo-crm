@@ -38,12 +38,6 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
     expose:
       - "8000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
     command: >
       sh -c "alembic upgrade head &&
              python -m app.seed &&

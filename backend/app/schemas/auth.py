@@ -20,11 +20,6 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=6, max_length=128)
 
 
-class UserList(BaseModel):
-    items: list[UserOut]
-    total: int
-
-
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
@@ -36,6 +31,11 @@ class UserOut(UserBase):
     id: int
     role: str
     created_at: datetime
+
+
+class UserList(BaseModel):
+    items: list[UserOut]
+    total: int
 
 
 class Token(BaseModel):
