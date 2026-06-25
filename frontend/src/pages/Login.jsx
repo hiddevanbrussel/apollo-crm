@@ -6,9 +6,8 @@ import { Spinner } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
-  const { user, login, register } = useAuth();
-  const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ name: "", email: "admin@apollo-crm.com", password: "admin123" });
+  const { user, login } = useAuth();
+  const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -19,11 +18,7 @@ export default function Login() {
     setError(null);
     setLoading(true);
     try {
-      if (mode === "login") {
-        await login(form.email, form.password);
-      } else {
-        await register(form.name, form.email, form.password);
-      }
+      await login(form.email, form.password);
     } catch (err) {
       setError(apiError(err, "Sign in failed."));
     } finally {
@@ -42,14 +37,8 @@ export default function Login() {
         </div>
 
         <div className="card p-7">
-          <h1 className="text-lg font-semibold text-ink-900">
-            {mode === "login" ? "Sign in" : "Create account"}
-          </h1>
-          <p className="mt-1 text-sm text-ink-500">
-            {mode === "login"
-              ? "Sign in to manage your CRM."
-              : "Create a new administrator account."}
-          </p>
+          <h1 className="text-lg font-semibold text-ink-900">Sign in</h1>
+          <p className="mt-1 text-sm text-ink-500">Sign in to manage your CRM.</p>
 
           {error && (
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -58,17 +47,6 @@ export default function Login() {
           )}
 
           <form onSubmit={submit} className="mt-5 space-y-4">
-            {mode === "register" && (
-              <div>
-                <label className="label">Name</label>
-                <input
-                  className="input"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  required
-                />
-              </div>
-            )}
             <div>
               <label className="label">Email</label>
               <input
@@ -77,6 +55,7 @@ export default function Login() {
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 required
+                autoComplete="email"
               />
             </div>
             <div>
@@ -87,35 +66,18 @@ export default function Login() {
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 required
+                autoComplete="current-password"
               />
             </div>
             <button type="submit" className="btn-primary w-full" disabled={loading}>
               {loading ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : null}
-              {mode === "login" ? "Sign in" : "Create account"}
+              Sign in
             </button>
           </form>
-
-          <div className="mt-5 text-center text-sm text-ink-500">
-            {mode === "login" ? (
-              <>
-                Don&apos;t have an account?{" "}
-                <button className="font-medium text-brand-600" onClick={() => setMode("register")}>
-                  Sign up
-                </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{" "}
-                <button className="font-medium text-brand-600" onClick={() => setMode("login")}>
-                  Sign in
-                </button>
-              </>
-            )}
-          </div>
         </div>
 
         <p className="mt-4 text-center text-xs text-ink-400">
-          Default demo login: admin@apollo-crm.com / admin123
+          Contact an administrator if you need an account.
         </p>
       </div>
     </div>

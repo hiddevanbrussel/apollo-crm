@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy import bindparam, func, or_, select, text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin, get_current_user
 from app.core.database import get_db
 from app.models import Company, Contact, EnrichmentLog, User
 from app.schemas.company import (
@@ -25,7 +25,12 @@ from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
 from app.services.groq_service import GroqError
-from app.services.import_service import ImportParseError, canonical_field, parse_spreadsheet
+from app.services.import_service import (
+    ImportParseError,
+    canonical_field,
+    normalize_domain,
+    parse_spreadsheet,
+)
 from app.services.settings_service import (
     build_client,
     build_groq_client,
@@ -217,7 +222,7 @@ def _extract_row(row: dict[str, str]) -> tuple[str | None, str | None, str | Non
         elif field == "country":
             country = (value or "").strip() or country
         elif field == "domain":
-            domain = (value or "").strip().lower() or domain
+            domain = normalize_domain(value) or domain
         elif value not in (None, ""):
             extra[header] = value
     return (name, country, domain, extra)
@@ -314,6 +319,7 @@ async def import_companies(
     recognized: set[str] = set()
     extra_cols: set[str] = set()
     seen_in_file: set[str] = set()
+    seen_domains: set[str] = set()
 
     for index, row in enumerate(rows, start=2):  # row 1 is the header
         for header in row:
@@ -322,7 +328,7 @@ async def import_companies(
 
         name, country, domain, extra = _extract_row(row)
         if not name:
-            errors.append(f"Rij {index}: 'customer_name' is leeg, overgeslagen.")
+            errors.append(f"Row {index}: 'customer_name' is empty, skipped.")
             continue
 
         dedup_key = f"{name.lower()}|{domain or ''}"
@@ -330,6 +336,27 @@ async def import_companies(
             skipped += 1
             continue
         seen_in_file.add(dedup_key)
+
+        # Domain already used in this file or database → import without domain field.
+        if domain:
+            if domain in seen_domains:
+                extra = {**extra, "import_domain": domain}
+                errors.append(
+                    f"Row {index}: domain '{domain}' already appears in this file; "
+                    f"imported '{name}' without domain."
+                )
+                domain = None
+            else:
+                clash = db.execute(
+                    select(Company).where(func.lower(Company.domain) == domain)
+                ).scalar_one_or_none()
+                if clash and clash.name.lower() != name.lower():
+                    extra = {**extra, "import_domain": domain}
+                    errors.append(
+                        f"Row {index}: domain '{domain}' belongs to '{clash.name}'; "
+                        f"imported '{name}' without domain."
+                    )
+                    domain = None
 
         # Match an existing company by name first, then by domain.
         existing = db.execute(
@@ -375,12 +402,15 @@ async def import_companies(
             created += 1
             created_names.append(name)
 
+        if company.domain:
+            seen_domains.add(company.domain.lower())
+
         if enrich and company.domain:
             db.flush()  # ensure company.id for logging
             if _enrich_company_inline(db, client, company):
                 enriched += 1
             else:
-                errors.append(f"Rij {index}: verrijken via Apollo mislukt voor '{name}'.")
+                errors.append(f"Row {index}: Apollo enrichment failed for '{name}'.")
 
     db.commit()
     return ImportResult(
@@ -681,7 +711,7 @@ def find_company_domain(
     company_id: int,
     overwrite: bool = Query(default=False, description="Overwrite an existing domain"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     """Use Groq (AI web search) to find this company's official website domain."""
     company = db.get(Company, company_id)
@@ -745,7 +775,7 @@ def bulk_find_domains(
         default=None, ge=1, description="Max companies to process. Omit to process all."
     ),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     """Find domains via Groq for companies without one. Processes all when no limit."""
     _ensure_groq_enabled(db)
@@ -814,7 +844,7 @@ def bulk_find_domains(
 
 
 @router.post("/find-domains/jobs", response_model=DomainJobOut)
-def start_find_domains_job(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def start_find_domains_job(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     """Start a background job that finds domains for all companies without one."""
     _ensure_groq_enabled(db)
     job, _started = domain_jobs.start_job()
@@ -822,13 +852,13 @@ def start_find_domains_job(db: Session = Depends(get_db), _: User = Depends(get_
 
 
 @router.get("/find-domains/jobs/active", response_model=DomainJobOut | None)
-def get_active_find_domains_job(_: User = Depends(get_current_user)):
+def get_active_find_domains_job(_: User = Depends(get_current_admin)):
     job = domain_jobs.get_active_job()
     return DomainJobOut(**job.to_dict()) if job else None
 
 
 @router.get("/find-domains/jobs/{job_id}", response_model=DomainJobOut)
-def get_find_domains_job(job_id: str, _: User = Depends(get_current_user)):
+def get_find_domains_job(job_id: str, _: User = Depends(get_current_admin)):
     job = domain_jobs.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")

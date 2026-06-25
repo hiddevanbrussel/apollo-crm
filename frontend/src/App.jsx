@@ -11,11 +11,19 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import MarketResearch from "./pages/MarketResearch";
 import Settings from "./pages/Settings";
+import Users from "./pages/Users";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <PageLoader />;
   if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+
+function AdminRoute({ children }) {
+  const { isAdmin, loading } = useAuth();
+  if (loading) return <PageLoader />;
+  if (!isAdmin) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -36,9 +44,10 @@ export default function App() {
         <Route path="companies/:id" element={<CompanyDetail />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="contacts/:id" element={<ContactDetail />} />
-        <Route path="apollo" element={<ApolloSearch />} />
-        <Route path="research" element={<MarketResearch />} />
-        <Route path="settings" element={<Settings />} />
+        <Route path="apollo" element={<AdminRoute><ApolloSearch /></AdminRoute>} />
+        <Route path="research" element={<AdminRoute><MarketResearch /></AdminRoute>} />
+        <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
+        <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

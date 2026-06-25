@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, verify_password
 from app.models import User
-from app.schemas.auth import Token, UserCreate, UserLogin, UserOut
+from app.schemas.auth import Token, UserLogin, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -15,25 +15,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def _build_token(user: User) -> Token:
     access_token = create_access_token(subject=user.id, extra={"role": user.role})
     return Token(access_token=access_token, user=UserOut.model_validate(user))
-
-
-@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
-    existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists."
-        )
-    user = User(
-        name=payload.name,
-        email=payload.email,
-        password_hash=hash_password(payload.password),
-        role=payload.role or "user",
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return _build_token(user)
 
 
 @router.post("/login", response_model=Token)

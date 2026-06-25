@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
+import { useAuth } from "../context/AuthContext";
 import { CompanyLogo, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
 
@@ -40,6 +41,7 @@ export default function CompanyDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { isAdmin } = useAuth();
   const [company, setCompany] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [tab, setTab] = useState("overview");
@@ -58,11 +60,12 @@ export default function CompanyDetail() {
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
+    if (!isAdmin) return;
     api
       .get("/settings/groq")
       .then((res) => setGroqReady(res.data.enabled && res.data.configured))
       .catch(() => setGroqReady(false));
-  }, []);
+  }, [isAdmin]);
 
   const load = useCallback(async () => {
     try {
@@ -203,15 +206,17 @@ export default function CompanyDetail() {
           <button className="btn-secondary" onClick={openEdit}>
             <Icon.Edit width={18} height={18} /> Edit
           </button>
-          <button
-            className="btn-secondary"
-            onClick={findDomain}
-            disabled={findingDomain || !groqReady}
-            title={groqReady ? "Find the domain via Groq (AI web search)" : "Groq is off — enable it in Settings"}
-          >
-            {findingDomain ? <Spinner className="h-4 w-4" /> : <Icon.Wand width={18} height={18} />}
-            Find domain
-          </button>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={findDomain}
+              disabled={findingDomain || !groqReady}
+              title={groqReady ? "Find the domain via Groq (AI web search)" : "Groq is off — enable it in Settings"}
+            >
+              {findingDomain ? <Spinner className="h-4 w-4" /> : <Icon.Wand width={18} height={18} />}
+              Find domain
+            </button>
+          )}
           <button
             className="btn-primary"
             onClick={enrich}

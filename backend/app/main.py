@@ -13,6 +13,7 @@ from app.api.routes import (
     dashboard,
     research,
     settings as settings_routes,
+    users,
 )
 from app.core.config import settings
 
@@ -53,3 +54,4 @@ app.include_router(apollo.router, prefix=api_prefix)
 app.include_router(settings_routes.router, prefix=api_prefix)
 app.include_router(ai.router, prefix=api_prefix)
 app.include_router(research.router, prefix=api_prefix)
+app.include_router(users.router, prefix=api_prefix)

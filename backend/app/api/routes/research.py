@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
@@ -58,7 +58,7 @@ def _detail(db: Session, search: ResearchSearch) -> ResearchDetail:
 def create_search(
     payload: ResearchCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
 ):
     if payload.query_type not in ("people", "organizations"):
         raise HTTPException(status_code=400, detail="query_type must be 'people' or 'organizations'.")
@@ -80,7 +80,7 @@ def create_search(
 
 
 @router.get("/searches", response_model=ResearchSearchList)
-def list_searches(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def list_searches(db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     rows = (
         db.execute(select(ResearchSearch).order_by(ResearchSearch.created_at.desc()))
         .scalars()
@@ -90,7 +90,7 @@ def list_searches(db: Session = Depends(get_db), _: User = Depends(get_current_u
 
 
 @router.get("/searches/{search_id}", response_model=ResearchDetail)
-def get_search(search_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_search(search_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     search = db.get(ResearchSearch, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Research search not found.")
@@ -98,7 +98,7 @@ def get_search(search_id: int, db: Session = Depends(get_db), _: User = Depends(
 
 
 @router.delete("/searches/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_search(search_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def delete_search(search_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_admin)):
     search = db.get(ResearchSearch, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Research search not found.")
@@ -112,7 +112,7 @@ def export_search(
     search_id: int,
     format: str = Query(default="csv", pattern="^(csv|xlsx)$"),
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     search = db.get(ResearchSearch, search_id)
     if not search:

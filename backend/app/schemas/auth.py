@@ -10,7 +10,19 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, max_length=128)
-    role: str = "user"
+    role: str = Field(default="user", pattern="^(admin|user)$")
+
+
+class UserUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    email: EmailStr | None = None
+    role: str | None = Field(default=None, pattern="^(admin|user)$")
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+
+
+class UserList(BaseModel):
+    items: list[UserOut]
+    total: int
 
 
 class UserLogin(BaseModel):

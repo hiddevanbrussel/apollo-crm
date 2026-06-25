@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin, get_current_user
 from app.core.database import get_db
 from app.models import Company, Contact, EnrichmentLog, SearchHistory, User
 from app.schemas.apollo import (
@@ -85,7 +85,7 @@ def _ensure_enabled(db: Session):
 def search_people(
     filters: PeopleSearchFilters,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
 ):
     _ensure_enabled(db)
     client = build_client(db)
@@ -105,7 +105,7 @@ def search_people(
 def search_organizations(
     filters: OrganizationSearchFilters,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
 ):
     _ensure_enabled(db)
     client = build_client(db)
@@ -125,7 +125,7 @@ def search_organizations(
 def enrich_person(
     payload: PersonEnrichInput,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     _ensure_enabled(db)
     client = build_client(db)
@@ -149,7 +149,7 @@ def enrich_person(
 def enrich_people_bulk(
     payload: BulkPersonEnrichInput,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     _ensure_enabled(db)
     client = build_client(db)
@@ -173,7 +173,7 @@ def enrich_people_bulk(
 def enrich_organization(
     payload: OrganizationEnrichInput,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     _ensure_enabled(db)
     client = build_client(db)
@@ -268,7 +268,7 @@ def _upsert_contact_from_person(db: Session, person: dict) -> Contact | None:
 def save_organizations(
     payload: SaveSelection,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     saved = 0
     for org in payload.results:
@@ -283,7 +283,7 @@ def save_organizations(
 def save_people(
     payload: SaveSelection,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     saved = 0
     for person in payload.results:
