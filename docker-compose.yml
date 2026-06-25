@@ -36,8 +36,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@apollo-crm.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+    expose:
+      - "8000"
     command: >
       sh -c "alembic upgrade head &&
              python -m app.seed &&
@@ -48,7 +48,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_API_URL: ${VITE_API_URL:-}
     container_name: apollo_crm_frontend
     restart: unless-stopped
     depends_on:

@@ -202,9 +202,7 @@ export default function Companies() {
       const fd = new FormData();
       fd.append("file", importFile);
       fd.append("enrich", enrichOnImport ? "true" : "false");
-      const { data } = await api.post("/companies/import", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const { data } = await api.post("/companies/import", fd);
       setImportResult(data);
       toast.success(
         `${data.created} created, ${data.updated} updated${data.enriched ? `, ${data.enriched} enriched` : ""}.`
