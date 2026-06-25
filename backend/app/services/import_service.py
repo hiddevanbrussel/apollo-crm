@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+from urllib.parse import urlparse
 
 from openpyxl import load_workbook
 
@@ -29,6 +30,11 @@ HEADER_ALIASES: dict[str, str] = {
     "website_url": "domain",
 }
 
+# Spreadsheet placeholders that mean "no domain" (Dutch/English).
+DOMAIN_PLACEHOLDERS = frozenset(
+    {"", "niet", "geen", "n/a", "na", "none", "unknown", "-", "—", "null", "?"}
+)
+
 
 class ImportParseError(Exception):
     pass
@@ -39,6 +45,26 @@ def canonical_field(header: object) -> str | None:
     if header is None:
         return None
     return HEADER_ALIASES.get(str(header).strip().lower())
+
+
+def normalize_domain(value: str | None) -> str | None:
+    """Turn a spreadsheet domain/website cell into a bare hostname, or None if empty/placeholder."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in DOMAIN_PLACEHOLDERS:
+        return None
+    candidate = raw
+    if "://" in candidate or candidate.startswith("www."):
+        parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        candidate = parsed.netloc or parsed.path.split("/")[0]
+    candidate = candidate.strip().lower().removeprefix("www.")
+    if not candidate or candidate in DOMAIN_PLACEHOLDERS or "@" in candidate or " " in candidate:
+        return None
+    return candidate
 
 
 def _has_name_column(headers) -> bool:

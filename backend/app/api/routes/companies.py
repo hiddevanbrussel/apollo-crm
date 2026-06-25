@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import bindparam, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_user, get_current_user
@@ -25,7 +26,12 @@ from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
 from app.services.groq_service import GroqError
-from app.services.import_service import ImportParseError, canonical_field, parse_spreadsheet
+from app.services.import_service import (
+    ImportParseError,
+    canonical_field,
+    normalize_domain,
+    parse_spreadsheet,
+)
 from app.services.settings_service import (
     build_client,
     build_groq_client,
@@ -217,7 +223,7 @@ def _extract_row(row: dict[str, str]) -> tuple[str | None, str | None, str | Non
         elif field == "country":
             country = (value or "").strip() or country
         elif field == "domain":
-            domain = (value or "").strip().lower() or domain
+            domain = normalize_domain(value) or domain
         elif value not in (None, ""):
             extra[header] = value
     return (name, country, domain, extra)
@@ -317,6 +323,7 @@ async def import_companies(
     recognized: set[str] = set()
     extra_cols: set[str] = set()
     seen_in_file: set[str] = set()
+    seen_domains_in_file: set[str] = set()
 
     for index, row in enumerate(rows, start=2):  # row 1 is the header
         for header in row:
@@ -327,6 +334,20 @@ async def import_companies(
         if not name:
             errors.append(f"Rij {index}: 'customer_name' is leeg, overgeslagen.")
             continue
+
+        if domain:
+            if domain in seen_domains_in_file:
+                extra.setdefault("import_domain", domain)
+                domain = None
+            else:
+                clash = db.execute(
+                    select(Company).where(func.lower(Company.domain) == domain)
+                ).scalar_one_or_none()
+                if clash and clash.name.lower() != name.lower():
+                    extra.setdefault("import_domain", domain)
+                    domain = None
+                else:
+                    seen_domains_in_file.add(domain)
 
         dedup_key = f"{name.lower()}|{domain or ''}"
         if dedup_key in seen_in_file:
@@ -352,6 +373,7 @@ async def import_companies(
                 if not clash or clash.id == existing.id:
                     existing.domain = domain
                     changed = True
+                    seen_domains_in_file.add(domain)
             if country and not existing.country:
                 existing.country = country
                 changed = True
@@ -377,6 +399,8 @@ async def import_companies(
             db.add(company)
             created += 1
             created_names.append(name)
+            if domain:
+                seen_domains_in_file.add(domain)
 
         if enrich and company.domain:
             db.flush()  # ensure company.id for logging
@@ -385,7 +409,16 @@ async def import_companies(
             else:
                 errors.append(f"Rij {index}: verrijken via Apollo mislukt voor '{name}'.")
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        detail = str(getattr(exc, "orig", exc))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Import failed: duplicate or invalid value in the data ({detail}).",
+        ) from exc
+
     return ImportResult(
         total_rows=len(rows),
         created=created,
