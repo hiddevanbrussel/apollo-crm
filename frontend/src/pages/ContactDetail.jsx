@@ -61,7 +61,7 @@ export default function ContactDetail() {
     try {
       const { data } = await api.post(`/contacts/${id}/enrich`);
       setContact(data);
-      toast.success("Contact enriched via Apollo.");
+      toast.success("Contact matched and enriched via Apollo.");
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -86,6 +86,12 @@ export default function ContactDetail() {
 
   const name = contact.full_name || `${contact.first_name || ""} ${contact.last_name || ""}`.trim() || "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  const canMatch =
+    Boolean(contact.apollo_id) ||
+    Boolean(contact.email?.trim()) ||
+    Boolean(contact.linkedin_url?.trim()) ||
+    Boolean(contact.full_name?.trim()) ||
+    Boolean(contact.first_name?.trim() && contact.last_name?.trim());
   const employment = Array.isArray(contact.apollo_data?.employment_history)
     ? contact.apollo_data.employment_history
     : [];
@@ -119,21 +125,31 @@ export default function ContactDetail() {
               className="btn-secondary"
               onClick={completeInfo}
               disabled={completing || !apolloReady}
-              title={apolloReady ? "Fetch the complete person profile via Apollo (uses credits)" : "Apollo is off — enable it in Settings"}
+              title={
+                apolloReady
+                  ? "Full profile via GET /people/{id} — requires an Apollo ID from Match or Find people"
+                  : "Apollo is off — enable it in Settings"
+              }
             >
               {completing ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={18} height={18} />}
-              {contact.enrichment_status === "enriched" ? "Refresh info" : "Get complete info"}
+              {contact.enrichment_status === "enriched" ? "Refresh profile" : "Full profile"}
             </button>
           )}
           {isAdmin && (
           <button
             className="btn-primary"
             onClick={enrich}
-            disabled={enriching || !apolloReady}
-            title={apolloReady ? "Enrich this contact via Apollo (uses credits)" : "Apollo is off — enable it in Settings"}
+            disabled={enriching || !apolloReady || !canMatch}
+            title={
+              !apolloReady
+                ? "Apollo is off — enable it in Settings"
+                : !canMatch
+                  ? "Add an email, name, or LinkedIn URL to match via Apollo"
+                  : "Match via Apollo people/match using name, email, company domain, LinkedIn…"
+            }
           >
             {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Sparkles width={18} height={18} />}
-            Enrich via Apollo
+            Match via Apollo
           </button>
           )}
         </div>

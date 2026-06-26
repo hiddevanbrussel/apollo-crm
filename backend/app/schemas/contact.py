@@ -79,6 +79,7 @@ class ContactFilterOptions(BaseModel):
     cities: list[str]
     seniorities: list[str]
     departments: list[str]
+    titles: list[str]
     companies: list[ContactCompanyOption]
 
 

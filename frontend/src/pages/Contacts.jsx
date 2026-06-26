@@ -16,6 +16,7 @@ const EMPTY_FILTERS = {
   city: "",
   seniority: "",
   department: "",
+  title: "",
 };
 
 function FilterSection({ title, icon: IconCmp, active, defaultOpen = false, children }) {
@@ -70,6 +71,7 @@ export default function Contacts() {
     cities: [],
     seniorities: [],
     departments: [],
+    titles: [],
     companies: [],
   });
   const [showFilters, setShowFilters] = useState(true);
@@ -106,6 +108,7 @@ export default function Contacts() {
       city: filters.city || undefined,
       seniority: filters.seniority || undefined,
       department: filters.department || undefined,
+      title: filters.title || undefined,
     }),
     [search, filters]
   );
@@ -446,8 +449,17 @@ export default function Contacts() {
                     </div>
                   </div>
                 </FilterSection>
-                <FilterSection title="Role" icon={Icon.Users} active={!!filters.seniority || !!filters.department} defaultOpen={!!filters.seniority || !!filters.department}>
+                <FilterSection title="Role" icon={Icon.Users} active={!!filters.title || !!filters.seniority || !!filters.department} defaultOpen={!!filters.title || !!filters.seniority || !!filters.department}>
                   <div className="space-y-3">
+                    <div>
+                      <p className="mb-1 text-xs font-medium text-ink-400">Title</p>
+                      <select className="input" value={filters.title} onChange={(e) => setFilter("title", e.target.value)}>
+                        <option value="">All titles</option>
+                        {filterOptions.titles.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Seniority</p>
                       <select className="input" value={filters.seniority} onChange={(e) => setFilter("seniority", e.target.value)}>

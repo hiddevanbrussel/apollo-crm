@@ -42,6 +42,70 @@ def map_organization(org: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _split_person_name(full: str) -> tuple[str | None, str | None]:
+    parts = full.strip().split(None, 1)
+    if not parts:
+        return None, None
+    return parts[0], parts[1] if len(parts) > 1 else None
+
+
+def build_person_match_payload(
+    contact: Any,
+    company: Any | None = None,
+    *,
+    reveal_personal_emails: bool = True,
+    run_waterfall_email: bool = True,
+) -> dict[str, Any]:
+    """Build payload for POST /api/v1/people/match from a CRM contact."""
+    from app.services.company_domains import email_domain
+
+    first = (contact.first_name or "").strip() or None
+    last = (contact.last_name or "").strip() or None
+    full = (contact.full_name or "").strip() or None
+
+    if not first and not last and full:
+        first, last = _split_person_name(full)
+
+    if not full and (first or last):
+        full = " ".join(p for p in [first, last] if p)
+
+    domain = None
+    org_name = None
+    if company:
+        domain = (company.domain or "").strip() or None
+        org_name = (company.name or "").strip() or None
+    if not domain and contact.email:
+        domain = email_domain(str(contact.email))
+
+    payload: dict[str, Any] = {
+        "first_name": first,
+        "last_name": last,
+        "name": full,
+        "email": str(contact.email).strip() if contact.email else None,
+        "linkedin_url": (contact.linkedin_url or "").strip() or None,
+        "organization_name": org_name,
+        "domain": domain,
+        "reveal_personal_emails": reveal_personal_emails,
+        "run_waterfall_email": run_waterfall_email,
+    }
+    apollo_id = (contact.apollo_id or "").strip() if contact.apollo_id else None
+    if apollo_id:
+        payload["id"] = apollo_id
+
+    return {k: v for k, v in payload.items() if v not in (None, "")}
+
+
+def has_person_match_criteria(payload: dict[str, Any]) -> bool:
+    """Return True if payload has enough fields for Apollo people/match."""
+    if payload.get("email") or payload.get("linkedin_url") or payload.get("id"):
+        return True
+    if payload.get("name"):
+        return True
+    if payload.get("first_name") and payload.get("last_name"):
+        return True
+    return False
+
+
 def map_person(person: dict[str, Any]) -> dict[str, Any]:
     """Map an Apollo person object to Contact fields (without company_id)."""
     if not person:

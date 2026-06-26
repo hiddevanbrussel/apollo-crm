@@ -37,7 +37,8 @@ class PersonEnrichInput(BaseModel):
     organization_name: str | None = None
     domain: str | None = None
     linkedin_url: str | None = None
-    reveal_personal_emails: bool = False
+    reveal_personal_emails: bool = True
+    run_waterfall_email: bool = True
     reveal_phone_number: bool = False
 
 

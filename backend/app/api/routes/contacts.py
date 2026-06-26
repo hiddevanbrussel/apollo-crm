@@ -20,7 +20,7 @@ from app.schemas.contact import (
     ContactOut,
     ContactUpdate,
 )
-from app.services.apollo_mapper import map_person
+from app.services.apollo_mapper import build_person_match_payload, has_person_match_criteria, map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
 from app.services.import_service import (
@@ -48,6 +48,7 @@ def _apply_contact_filters(
     city: str | None = None,
     seniority: str | None = None,
     department: str | None = None,
+    title: str | None = None,
 ):
     if search:
         like = f"%{search.lower()}%"
@@ -74,6 +75,8 @@ def _apply_contact_filters(
         stmt = stmt.where(func.lower(Contact.seniority) == seniority.lower())
     if department:
         stmt = stmt.where(func.lower(Contact.department) == department.lower())
+    if title:
+        stmt = stmt.where(func.lower(Contact.title) == title.lower())
     return stmt
 
 
@@ -102,6 +105,7 @@ def list_contacts(
     city: str | None = None,
     seniority: str | None = None,
     department: str | None = None,
+    title: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
@@ -115,6 +119,7 @@ def list_contacts(
         city=city,
         seniority=seniority,
         department=department,
+        title=title,
     )
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -147,6 +152,7 @@ def contact_filter_options(db: Session = Depends(get_db), _: User = Depends(get_
         cities=_distinct(Contact.city),
         seniorities=_distinct(Contact.seniority),
         departments=_distinct(Contact.department),
+        titles=_distinct(Contact.title),
         companies=[ContactCompanyOption(id=r.id, name=r.name) for r in company_rows],
     )
 
@@ -163,6 +169,7 @@ def export_contacts(
     city: str | None = None,
     seniority: str | None = None,
     department: str | None = None,
+    title: str | None = None,
 ):
     """Export filtered contacts as CSV (max 10,000 rows)."""
     stmt = _apply_contact_filters(
@@ -175,6 +182,7 @@ def export_contacts(
         city=city,
         seniority=seniority,
         department=department,
+        title=title,
     )
     stmt = stmt.order_by(Contact.updated_at.desc()).limit(MAX_EXPORT_ROWS)
     contacts = db.execute(stmt).scalars().all()
@@ -538,7 +546,7 @@ def fetch_complete_person(contact_id: int, db: Session = Depends(get_db), _: Use
     if not contact.apollo_id:
         raise HTTPException(
             status_code=400,
-            detail="This contact has no Apollo person id. Use 'Find people' on its company first.",
+            detail="This contact has no Apollo person id. Use 'Match via Apollo' on this page, or find people on its company first.",
         )
 
     _ensure_apollo_enabled(db)
@@ -605,16 +613,15 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
         raise HTTPException(status_code=404, detail="Contact not found.")
 
     company = db.get(Company, contact.company_id) if contact.company_id else None
-    request_payload = {
-        "first_name": contact.first_name,
-        "last_name": contact.last_name,
-        "name": contact.full_name,
-        "email": contact.email,
-        "linkedin_url": contact.linkedin_url,
-        "organization_name": company.name if company else None,
-        "domain": company.domain if company else None,
-        "reveal_personal_emails": True,
-    }
+    request_payload = build_person_match_payload(contact, company)
+    if not has_person_match_criteria(request_payload):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Not enough data to match this person. Provide at least an email, "
+                "LinkedIn URL, full name, or first and last name."
+            ),
+        )
     _ensure_apollo_enabled(db)
     client = build_client(db)
     try:
@@ -634,6 +641,26 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
         raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
 
     person = response.get("person") or {}
+    if not person:
+        contact.enrichment_status = "failed"
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint="/api/v1/people/match",
+                request_payload={k: v for k, v in request_payload.items() if k != "email"},
+                response_status=404,
+            )
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Apollo found no matching person. Add email, LinkedIn, or link a company "
+                "for better matching and try again."
+            ),
+        )
+
     mapped = map_person(person)
     org = mapped.pop("_organization", None)
     for key, value in mapped.items():
