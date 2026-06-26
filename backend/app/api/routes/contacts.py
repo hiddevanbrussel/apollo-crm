@@ -17,6 +17,10 @@ from app.schemas.contact import (
     BulkEnrichFilteredResult,
     ContactCompanyOption,
     ContactCreate,
+    ContactEnrichJobOut,
+    ContactEnrichJobStart,
+    ContactEnrichJobStartResult,
+    ContactEnrichJobFilters,
     ContactFilterOptions,
     ContactImportResult,
     ContactList,
@@ -34,6 +38,7 @@ from app.services.contact_enrich import (
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
+from app.services import contact_enrich_jobs
 from app.services.import_service import (
     ImportParseError,
     contact_canonical_field,
@@ -173,6 +178,39 @@ def _run_bulk_enrich(db: Session, contacts: list[Contact]) -> BulkEnrichResult:
             label = contact.full_name or contact.email or f"#{contact.id}"
             result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
     return result
+
+
+def _resolve_enrich_job_contact_ids(
+    db: Session,
+    payload: ContactEnrichJobStart,
+) -> tuple[list[int], str, dict | None]:
+    if payload.ids:
+        return list(dict.fromkeys(payload.ids)), "selected", None
+
+    filters = payload.filters or ContactEnrichJobFilters()
+    stmt = _unenriched_contacts_stmt(
+        search=filters.search,
+        company_id=filters.company_id,
+        source=filters.source,
+        enrichment_status=filters.enrichment_status,
+        country=filters.country,
+        city=filters.city,
+        seniority=filters.seniority,
+        department=filters.department,
+        title=filters.title,
+        titles=filters.titles or None,
+        tier=filters.tier,
+    )
+    contacts = db.scalars(stmt.order_by(Contact.updated_at.asc(), Contact.id.asc())).all()
+    contact_ids = [c.id for c in contacts]
+    filters_dict = filters.model_dump(exclude_none=True)
+    if filters.titles:
+        filters_dict["titles"] = filters.titles
+    return contact_ids, "unenriched", filters_dict or None
+
+
+def _job_out(job: contact_enrich_jobs.ContactEnrichJob) -> ContactEnrichJobOut:
+    return ContactEnrichJobOut(**job.to_dict())
 
 
 def _waterfall_contacts_filter():
@@ -755,6 +793,47 @@ def bulk_enrich_unenriched_contacts(
         processed=len(contacts),
         remaining=remaining,
     )
+
+
+@router.post("/enrich/jobs", response_model=ContactEnrichJobStartResult)
+def start_contact_enrich_job(
+    payload: ContactEnrichJobStart,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """Plan batches and start background enrichment for selected or filtered contacts."""
+    _ensure_enrichment_enabled(db)
+
+    contact_ids, source, filters = _resolve_enrich_job_contact_ids(db, payload)
+    if not contact_ids:
+        raise HTTPException(status_code=400, detail="No contacts matched for this job.")
+
+    job, started = contact_enrich_jobs.start_job(
+        contact_ids,
+        source=source,
+        filters=filters,
+        batch_size=MAX_BULK_ENRICH,
+    )
+    return ContactEnrichJobStartResult(job=_job_out(job), started=started)
+
+
+@router.get("/enrich/jobs", response_model=list[ContactEnrichJobOut])
+def list_contact_enrich_jobs(_: User = Depends(get_current_user)):
+    return [_job_out(job) for job in contact_enrich_jobs.list_jobs()]
+
+
+@router.get("/enrich/jobs/active", response_model=ContactEnrichJobOut | None)
+def get_active_contact_enrich_job(_: User = Depends(get_current_user)):
+    job = contact_enrich_jobs.get_active_job()
+    return _job_out(job) if job else None
+
+
+@router.get("/enrich/jobs/{job_id}", response_model=ContactEnrichJobOut)
+def get_contact_enrich_job(job_id: str, _: User = Depends(get_current_user)):
+    job = contact_enrich_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return _job_out(job)
 
 
 @router.get("/waterfall-status", response_model=WaterfallStatusOut)

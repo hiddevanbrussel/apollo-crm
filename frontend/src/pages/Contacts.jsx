@@ -27,6 +27,26 @@ function formatWhen(iso) {
   return new Date(iso).toLocaleString();
 }
 
+function buildJobFilters(search, filters) {
+  const f = {};
+  if (search?.trim()) f.search = search.trim();
+  if (filters.company_id) f.company_id = Number(filters.company_id);
+  if (filters.tier) f.tier = filters.tier;
+  if (filters.source) f.source = filters.source;
+  if (filters.status) f.enrichment_status = filters.status;
+  if (filters.country) f.country = filters.country;
+  if (filters.city) f.city = filters.city;
+  if (filters.seniority) f.seniority = filters.seniority;
+  if (filters.department) f.department = filters.department;
+  if (filters.titles?.length) f.titles = filters.titles;
+  return f;
+}
+
+function formatJobTime(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString();
+}
+
 function contactQueryParams({ search, filters, page, pageSize }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
@@ -382,32 +402,25 @@ export default function Contacts() {
   const enrichSelected = async () => {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    if (ids.length > 50) {
-      toast.error("Maximum 50 contacts per bulk match.");
-      return;
-    }
+    const batchCount = Math.ceil(ids.length / 50) || 1;
     if (
       !confirm(
-        `Match ${ids.length} selected contact(s)? This uses enrichment credits for each contact.`
+        `Match ${ids.length} selected contact(s)? ${batchCount} batch(es) will be prepared and run in the background.`
       )
     ) {
       return;
     }
     setEnrichingSelected(true);
     try {
-      const { data: res } = await api.post("/contacts/bulk-enrich", { ids });
-      const parts = [];
-      if (res.enriched) parts.push(`${res.enriched} enriched`);
-      if (res.pending) parts.push(`${res.pending} pending`);
-      if (res.failed) parts.push(`${res.failed} failed`);
-      if (res.skipped) parts.push(`${res.skipped} skipped`);
-      toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
-      if (res.errors?.length) {
-        toast.info(res.errors.slice(0, 3).join(" · "));
+      const { data } = await api.post("/contacts/enrich/jobs", { ids });
+      if (!data.started) {
+        toast.info("An enrichment job is already running. See Settings → Activity for progress.");
+      } else {
+        toast.success(
+          `Job started: ${data.job.batch_count} batch(es) for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+        );
+        setSelectedIds(new Set());
       }
-      setSelectedIds(new Set());
-      load();
-      loadWaterfallStatus();
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -425,47 +438,25 @@ export default function Contacts() {
         toast.info("No contacts to enrich for the current filters.");
         return;
       }
+      const batchCount = Math.ceil(preview.total_matched / 50) || 1;
       if (
         !confirm(
-          `Match ${preview.total_matched} contact(s) that are not enriched yet? This runs in batches of 50 and uses enrichment credits.`
+          `Match ${preview.total_matched} contact(s)? ${batchCount} batch(es) will be prepared and run in the background.`
         )
       ) {
         return;
       }
-
-      qs.delete("limit");
-      const totals = { enriched: 0, pending: 0, failed: 0, skipped: 0 };
-      const errors = [];
-      let remaining = preview.total_matched;
-      let batches = 0;
-      const maxBatches = 500;
-
-      while (remaining > 0 && batches < maxBatches) {
-        const { data: res } = await api.post(`/contacts/bulk-enrich-unenriched?${qs.toString()}`);
-        batches += 1;
-        totals.enriched += res.enriched;
-        totals.pending += res.pending;
-        totals.failed += res.failed;
-        totals.skipped += res.skipped;
-        if (res.errors?.length) errors.push(...res.errors);
-        if (res.processed === 0) break;
-        if (res.enriched === 0 && res.pending === 0 && res.failed === res.processed) {
-          toast.info(`Stopped: ${res.remaining} contact(s) could not be matched.`);
-          remaining = res.remaining;
-          break;
-        }
-        remaining = res.remaining;
+      const jobFilters = buildJobFilters(search, filters);
+      const { data } = await api.post("/contacts/enrich/jobs", {
+        filters: Object.keys(jobFilters).length ? jobFilters : undefined,
+      });
+      if (!data.started) {
+        toast.info("An enrichment job is already running. See Settings → Activity for progress.");
+      } else {
+        toast.success(
+          `Job started: ${data.job.batch_count} batch(es) for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+        );
       }
-
-      const parts = [];
-      if (totals.enriched) parts.push(`${totals.enriched} enriched`);
-      if (totals.pending) parts.push(`${totals.pending} pending`);
-      if (totals.failed) parts.push(`${totals.failed} failed`);
-      if (totals.skipped) parts.push(`${totals.skipped} skipped`);
-      toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
-      if (errors.length) toast.info(errors.slice(0, 3).join(" · "));
-      load();
-      loadWaterfallStatus();
     } catch (err) {
       toast.error(apiError(err));
     } finally {

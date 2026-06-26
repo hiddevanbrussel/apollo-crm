@@ -134,6 +134,68 @@ class WaterfallStatusOut(BaseModel):
     items: list[WaterfallContactItem]
 
 
+class ContactEnrichJobFilters(BaseModel):
+    search: str | None = None
+    company_id: int | None = None
+    source: str | None = None
+    enrichment_status: str | None = None
+    country: str | None = None
+    city: str | None = None
+    seniority: str | None = None
+    department: str | None = None
+    title: str | None = None
+    titles: list[str] = Field(default_factory=list)
+    tier: str | None = None
+
+
+class ContactEnrichJobStart(BaseModel):
+    ids: list[int] | None = None
+    filters: ContactEnrichJobFilters | None = None
+
+
+class ContactEnrichBatchOut(BaseModel):
+    index: int
+    contact_count: int
+    status: str
+    enriched: int
+    pending: int
+    failed: int
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class ContactEnrichJobLogEntry(BaseModel):
+    at: float
+    message: str
+
+
+class ContactEnrichJobOut(BaseModel):
+    id: str
+    status: str
+    source: str
+    filters: dict | None = None
+    total_contacts: int
+    batch_size: int
+    batch_count: int
+    processed_contacts: int
+    enriched: int
+    pending: int
+    failed: int
+    skipped: int
+    current_batch: int | None = None
+    current_contact: str | None = None
+    batches: list[ContactEnrichBatchOut]
+    log: list[ContactEnrichJobLogEntry]
+    error: str | None = None
+    started_at: float
+    finished_at: float | None = None
+
+
+class ContactEnrichJobStartResult(BaseModel):
+    job: ContactEnrichJobOut
+    started: bool
+
+
 class ContactImportResult(BaseModel):
     total_rows: int
     created: int

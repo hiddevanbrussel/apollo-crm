@@ -8,6 +8,7 @@ import { useToast } from "../context/ToastContext";
 
 const SUB_TABS = [
   { id: "integrations", label: "Integrations" },
+  { id: "activity", label: "Activity" },
   { id: "import", label: "Import" },
   { id: "about", label: "About" },
 ];
@@ -84,6 +85,8 @@ export default function Settings() {
   const [groqTesting, setGroqTesting] = useState(false);
   const [groqTest, setGroqTest] = useState(null);
   const [domainJob, setDomainJob] = useState(null);
+  const [enrichJob, setEnrichJob] = useState(null);
+  const [enrichJobs, setEnrichJobs] = useState([]);
 
   // Logokit state
   const [logokit, setLogokit] = useState(null);
@@ -131,6 +134,14 @@ export default function Settings() {
       .then((r) => r.data && setDomainJob(r.data))
       .catch(() => {});
     api
+      .get("/contacts/enrich/jobs/active")
+      .then((r) => setEnrichJob(r.data || null))
+      .catch(() => setEnrichJob(null));
+    api
+      .get("/contacts/enrich/jobs")
+      .then((r) => setEnrichJobs(r.data || []))
+      .catch(() => setEnrichJobs([]));
+    api
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
@@ -158,6 +169,34 @@ export default function Settings() {
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domainJob?.id, domainJob?.status]);
+
+  useEffect(() => {
+    if (!enrichJob || !["queued", "running"].includes(enrichJob.status)) return;
+    const timer = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/contacts/enrich/jobs/${enrichJob.id}`);
+        setEnrichJob(data);
+        if (!["queued", "running"].includes(data.status)) {
+          clearInterval(timer);
+          const parts = [];
+          if (data.enriched) parts.push(`${data.enriched} enriched`);
+          if (data.pending) parts.push(`${data.pending} pending`);
+          if (data.failed) parts.push(`${data.failed} failed`);
+          toast.success(
+            data.status === "completed"
+              ? `Contact enrichment done${parts.length ? `: ${parts.join(", ")}` : "."}`
+              : `Contact enrichment failed: ${data.error || "unknown error"}`
+          );
+          const { data: list } = await api.get("/contacts/enrich/jobs");
+          setEnrichJobs(list || []);
+        }
+      } catch {
+        clearInterval(timer);
+      }
+    }, 1500);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enrichJob?.id, enrichJob?.status]);
 
   // --- Apollo handlers ---
   const toggleApollo = async (value) => {
@@ -383,6 +422,99 @@ export default function Settings() {
 
   if (!apollo || !groq || !logokit || !prospeo) return <PageLoader />;
 
+  const formatJobTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
+
+  const batchStatusClass = (status) => {
+    if (status === "completed") return "bg-green-50 text-green-700";
+    if (status === "running") return "bg-amber-50 text-amber-700";
+    if (status === "failed") return "bg-red-50 text-red-700";
+    return "bg-ink-100 text-ink-600";
+  };
+
+  const JobCard = ({ job, active = false }) => (
+    <div className={`rounded-lg border p-4 ${active ? "border-brand-200 bg-brand-50/30" : "border-ink-100"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-ink-900">
+            {job.source === "selected" ? "Selected contacts" : "Unenriched contacts"}
+            {active && <span className="ml-2 text-xs font-normal text-brand-600">Active</span>}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-500">
+            Started {formatJobTime(job.started_at)}
+            {job.finished_at && ` · Finished ${formatJobTime(job.finished_at)}`}
+          </p>
+        </div>
+        <span className={`badge capitalize ${batchStatusClass(job.status)}`}>{job.status}</span>
+      </div>
+
+      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-ink-100">
+        <div
+          className="h-full rounded-full bg-brand-500 transition-all duration-500"
+          style={{
+            width: `${
+              job.total_contacts
+                ? Math.round((job.processed_contacts / job.total_contacts) * 100)
+                : job.status === "running"
+                  ? 5
+                  : 100
+            }%`,
+          }}
+        />
+      </div>
+      <p className="mt-1.5 text-xs text-ink-500">
+        {job.processed_contacts}/{job.total_contacts} contacts · {job.enriched} enriched · {job.pending} pending ·{" "}
+        {job.failed} failed
+        {job.current_contact && job.status === "running" && (
+          <span className="block truncate text-ink-400">Current: {job.current_contact}</span>
+        )}
+      </p>
+
+      {job.batches?.length > 0 && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-ink-100 text-left text-ink-400">
+                <th className="pb-1.5 pr-3 font-medium">Batch</th>
+                <th className="pb-1.5 pr-3 font-medium">Contacts</th>
+                <th className="pb-1.5 pr-3 font-medium">Status</th>
+                <th className="pb-1.5 font-medium">Result</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {job.batches.map((batch) => (
+                <tr key={batch.index}>
+                  <td className="py-1.5 pr-3 font-medium text-ink-700">#{batch.index}</td>
+                  <td className="py-1.5 pr-3 text-ink-600">{batch.contact_count}</td>
+                  <td className="py-1.5 pr-3">
+                    <span className={`badge capitalize ${batchStatusClass(batch.status)}`}>{batch.status}</span>
+                  </td>
+                  <td className="py-1.5 text-ink-500">
+                    {batch.status === "queued"
+                      ? "Waiting"
+                      : `${batch.enriched} ok · ${batch.pending} pending · ${batch.failed} failed`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {job.log?.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-ink-500">Log ({job.log.length})</summary>
+          <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg bg-ink-900 p-3 font-mono text-[11px] text-ink-100">
+            {job.log.map((entry, i) => (
+              <li key={`${entry.at}-${i}`}>
+                <span className="text-ink-400">{formatJobTime(entry.at)}</span> {entry.message}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+
   const TestResult = ({ result }) =>
     result ? (
       <div
@@ -483,6 +615,73 @@ export default function Settings() {
               }}
             />
           </div>
+        </div>
+      )}
+
+      {tab === "activity" && (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-base font-semibold text-ink-900">Background jobs & logging</h2>
+            <p className="text-sm text-ink-500">
+              Track bulk contact enrichment batches and other background tasks.
+            </p>
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-ink-900">Contact enrichment</h3>
+            <p className="mt-1 text-xs text-ink-500">
+              Start from Contacts via &quot;Match unenriched&quot; or &quot;Match selected&quot;. Batches of 50 are
+              planned automatically before execution.
+            </p>
+            {enrichJob && ["queued", "running"].includes(enrichJob.status) ? (
+              <div className="mt-4">
+                <JobCard job={enrichJob} active />
+              </div>
+            ) : enrichJobs.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-400">No enrichment jobs yet.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <JobCard job={enrichJobs[0]} active={false} />
+              </div>
+            )}
+            {enrichJobs.length > 1 && (
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs font-medium text-brand-600">
+                  Previous jobs ({enrichJobs.length - 1})
+                </summary>
+                <div className="mt-3 space-y-3">
+                  {enrichJobs.slice(1).map((job) => (
+                    <JobCard key={job.id} job={job} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+
+          {domainJob && (
+            <div className="card p-5">
+              <h3 className="text-sm font-semibold text-ink-900">Domain lookup (Groq)</h3>
+              <div className="mt-3 space-y-1.5">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-ink-100">
+                  <div
+                    className="h-full rounded-full bg-accent-500 transition-all duration-500"
+                    style={{
+                      width: `${domainJob.total ? Math.round((domainJob.processed / domainJob.total) * 100) : domainJob.status === "running" ? 5 : 100}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-ink-500">
+                  {domainJob.status === "running"
+                    ? `Processing ${domainJob.processed}/${domainJob.total || "…"}`
+                    : domainJob.status === "completed"
+                      ? `Completed · ${domainJob.processed}/${domainJob.total} processed`
+                      : `Failed · ${domainJob.error || "unknown error"}`}
+                  {" · "}
+                  {domainJob.applied} applied · {domainJob.found} found
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
