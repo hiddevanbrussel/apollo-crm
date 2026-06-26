@@ -50,6 +50,7 @@ def _apply_contact_filters(
     seniority: str | None = None,
     department: str | None = None,
     title: str | None = None,
+    titles: list[str] | None = None,
 ):
     if search:
         like = f"%{search.lower()}%"
@@ -76,8 +77,12 @@ def _apply_contact_filters(
         stmt = stmt.where(func.lower(Contact.seniority) == seniority.lower())
     if department:
         stmt = stmt.where(func.lower(Contact.department) == department.lower())
-    if title:
-        stmt = stmt.where(func.lower(Contact.title) == title.lower())
+    title_values = [t.strip() for t in (titles or []) if t and t.strip()]
+    if not title_values and title:
+        title_values = [title.strip()]
+    if title_values:
+        lowered = [t.lower() for t in title_values]
+        stmt = stmt.where(func.lower(Contact.title).in_(lowered))
     return stmt
 
 
@@ -107,6 +112,7 @@ def list_contacts(
     seniority: str | None = None,
     department: str | None = None,
     title: str | None = None,
+    titles: list[str] | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
@@ -121,6 +127,7 @@ def list_contacts(
         seniority=seniority,
         department=department,
         title=title,
+        titles=titles,
     )
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -171,6 +178,7 @@ def export_contacts(
     seniority: str | None = None,
     department: str | None = None,
     title: str | None = None,
+    titles: list[str] | None = Query(default=None),
 ):
     """Export filtered contacts as CSV (max 10,000 rows)."""
     stmt = _apply_contact_filters(
@@ -184,6 +192,7 @@ def export_contacts(
         seniority=seniority,
         department=department,
         title=title,
+        titles=titles,
     )
     stmt = stmt.order_by(Contact.updated_at.desc()).limit(MAX_EXPORT_ROWS)
     contacts = db.execute(stmt).scalars().all()

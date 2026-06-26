@@ -16,8 +16,46 @@ const EMPTY_FILTERS = {
   city: "",
   seniority: "",
   department: "",
-  title: "",
+  titles: [],
 };
+
+function contactQueryParams({ search, filters, page, pageSize }) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (filters.status) params.set("enrichment_status", filters.status);
+  if (filters.source) params.set("source", filters.source);
+  if (filters.company_id) params.set("company_id", filters.company_id);
+  if (filters.country) params.set("country", filters.country);
+  if (filters.city) params.set("city", filters.city);
+  if (filters.seniority) params.set("seniority", filters.seniority);
+  if (filters.department) params.set("department", filters.department);
+  (filters.titles || []).forEach((t) => params.append("titles", t));
+  if (page) params.set("page", String(page));
+  if (pageSize) params.set("page_size", String(pageSize));
+  return params;
+}
+
+function normalizePresetFilters(raw = {}) {
+  const next = { ...EMPTY_FILTERS, ...raw };
+  if (raw.title && (!next.titles || next.titles.length === 0)) {
+    next.titles = [raw.title];
+  }
+  delete next.title;
+  if (!Array.isArray(next.titles)) next.titles = [];
+  return next;
+}
+
+function countActiveFilters(filters, search) {
+  let n = search ? 1 : 0;
+  Object.entries(filters).forEach(([key, value]) => {
+    if (key === "titles") {
+      if (value?.length) n += 1;
+      return;
+    }
+    if (value) n += 1;
+  });
+  return n;
+}
 
 function FilterSection({ title, icon: IconCmp, active, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -81,6 +119,8 @@ export default function Contacts() {
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const [savedPresets, setSavedPresets] = useState([]);
   const [showSavePreset, setShowSavePreset] = useState(false);
@@ -98,34 +138,19 @@ export default function Contacts() {
       .catch(() => {});
   }, []);
 
-  const filterParams = useCallback(
-    () => ({
-      search: search || undefined,
-      enrichment_status: filters.status || undefined,
-      source: filters.source || undefined,
-      company_id: filters.company_id ? Number(filters.company_id) : undefined,
-      country: filters.country || undefined,
-      city: filters.city || undefined,
-      seniority: filters.seniority || undefined,
-      department: filters.department || undefined,
-      title: filters.title || undefined,
-    }),
-    [search, filters]
-  );
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/contacts", {
-        params: { ...filterParams(), page, page_size: pageSize },
-      });
+      const qs = contactQueryParams({ search, filters, page, pageSize });
+      const { data } = await api.get(`/contacts?${qs.toString()}`);
       setData(data);
+      setSelectedIds(new Set());
     } catch (err) {
       toast.error(apiError(err));
     } finally {
       setLoading(false);
     }
-  }, [filterParams, page, toast]);
+  }, [search, filters, page, toast]);
 
   useEffect(() => {
     load();
@@ -136,17 +161,28 @@ export default function Contacts() {
     setPage(1);
   };
 
+  const toggleTitle = (title) => {
+    setFilters((prev) => {
+      const has = prev.titles.includes(title);
+      return {
+        ...prev,
+        titles: has ? prev.titles.filter((t) => t !== title) : [...prev.titles, title],
+      };
+    });
+    setPage(1);
+  };
+
   const clearFilters = () => {
     setFilters(EMPTY_FILTERS);
     setSearch("");
     setPage(1);
   };
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length + (search ? 1 : 0);
+  const activeFilterCount = countActiveFilters(filters, search);
 
   const applyPreset = (preset) => {
     setSearch(preset.search || "");
-    setFilters({ ...EMPTY_FILTERS, ...preset.filters });
+    setFilters(normalizePresetFilters(preset.filters));
     setPage(1);
     toast.success(`Filter "${preset.name}" applied.`);
   };
@@ -181,8 +217,8 @@ export default function Contacts() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const response = await api.get("/contacts/export", {
-        params: filterParams(),
+      const qs = contactQueryParams({ search, filters });
+      const response = await api.get(`/contacts/export?${qs.toString()}`, {
         responseType: "blob",
       });
       const url = URL.createObjectURL(response.data);
@@ -249,6 +285,7 @@ export default function Contacts() {
       const { data: res } = await api.delete("/contacts/all");
       toast.success(`${res.deleted} contact(s) deleted.`);
       setPage(1);
+      setSelectedIds(new Set());
       load();
     } catch (err) {
       toast.error(apiError(err));
@@ -256,6 +293,48 @@ export default function Contacts() {
       setDeletingAll(false);
     }
   };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllOnPage = () => {
+    if (!data?.items?.length) return;
+    const pageIds = data.items.map((c) => c.id);
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const deleteSelected = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} selected contact(s)? This cannot be undone.`)) return;
+    setDeletingSelected(true);
+    try {
+      const { data: res } = await api.post("/contacts/bulk-delete", { ids });
+      toast.success(`${res.deleted} contact(s) deleted.`);
+      setSelectedIds(new Set());
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setDeletingSelected(false);
+    }
+  };
+
+  const pageIds = data?.items?.map((c) => c.id) || [];
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const someOnPageSelected = pageIds.some((id) => selectedIds.has(id));
 
   return (
     <div className="space-y-5">
@@ -285,6 +364,27 @@ export default function Contacts() {
           </button>
         </div>
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
+          <span className="text-sm font-medium text-brand-800">
+            {selectedIds.size} contact{selectedIds.size === 1 ? "" : "s"} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button className="btn-secondary" onClick={() => setSelectedIds(new Set())}>
+              Clear selection
+            </button>
+            <button
+              className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
+              onClick={deleteSelected}
+              disabled={deletingSelected}
+            >
+              {deletingSelected ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
+              Delete selected
+            </button>
+          </div>
+        </div>
+      )}
 
       {savedPresets.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -346,6 +446,18 @@ export default function Contacts() {
                 <table className="w-full">
                   <thead className="border-b border-ink-100 bg-ink-50/50">
                     <tr>
+                      <th className="table-th w-10">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-ink-300"
+                          checked={allOnPageSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someOnPageSelected && !allOnPageSelected;
+                          }}
+                          onChange={toggleSelectAllOnPage}
+                          aria-label="Select all on this page"
+                        />
+                      </th>
                       <th className="table-th">Name</th>
                       <th className="table-th">Title</th>
                       <th className="table-th">Company</th>
@@ -357,7 +469,16 @@ export default function Contacts() {
                   </thead>
                   <tbody className="divide-y divide-ink-100">
                     {data.items.map((ct) => (
-                      <tr key={ct.id} className="hover:bg-ink-50/60">
+                      <tr key={ct.id} className={`hover:bg-ink-50/60 ${selectedIds.has(ct.id) ? "bg-brand-50/40" : ""}`}>
+                        <td className="table-td">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-ink-300"
+                            checked={selectedIds.has(ct.id)}
+                            onChange={() => toggleSelected(ct.id)}
+                            aria-label={`Select ${ct.full_name || ct.email || "contact"}`}
+                          />
+                        </td>
                         <td className="table-td">
                           <Link to={`/contacts/${ct.id}`} className="font-medium text-ink-900 hover:text-brand-600">
                             {ct.full_name || `${ct.first_name || ""} ${ct.last_name || ""}`.trim() || "—"}
@@ -449,16 +570,38 @@ export default function Contacts() {
                     </div>
                   </div>
                 </FilterSection>
-                <FilterSection title="Role" icon={Icon.Users} active={!!filters.title || !!filters.seniority || !!filters.department} defaultOpen={!!filters.title || !!filters.seniority || !!filters.department}>
+                <FilterSection title="Role" icon={Icon.Users} active={filters.titles.length > 0 || !!filters.seniority || !!filters.department} defaultOpen={filters.titles.length > 0 || !!filters.seniority || !!filters.department}>
                   <div className="space-y-3">
                     <div>
-                      <p className="mb-1 text-xs font-medium text-ink-400">Title</p>
-                      <select className="input" value={filters.title} onChange={(e) => setFilter("title", e.target.value)}>
-                        <option value="">All titles</option>
-                        {filterOptions.titles.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <div className="mb-1 flex items-center justify-between">
+                        <p className="text-xs font-medium text-ink-400">Title</p>
+                        {filters.titles.length > 0 && (
+                          <button
+                            type="button"
+                            className="text-xs font-medium text-brand-600 hover:underline"
+                            onClick={() => setFilter("titles", [])}
+                          >
+                            Clear ({filters.titles.length})
+                          </button>
+                        )}
+                      </div>
+                      {filterOptions.titles.length === 0 ? (
+                        <p className="text-xs text-ink-400">No titles in your contacts yet.</p>
+                      ) : (
+                        <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-ink-100 p-2">
+                          {filterOptions.titles.map((v) => (
+                            <label key={v} className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm text-ink-700 hover:bg-ink-50">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 rounded border-ink-300"
+                                checked={filters.titles.includes(v)}
+                                onChange={() => toggleTitle(v)}
+                              />
+                              <span className="leading-snug">{v}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Seniority</p>
