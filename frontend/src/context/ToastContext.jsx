@@ -13,6 +13,7 @@ export function ToastProvider({ children }) {
 
   const push = useCallback(
     (message, type = "info") => {
+      if (!message) return;
       const id = ++idCounter;
       setToasts((prev) => [...prev, { id, message, type }]);
       setTimeout(() => remove(id), 4000);

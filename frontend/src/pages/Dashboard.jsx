@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api, { apiError } from "../api/client";
+import api, { apiError, isUnauthorized } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, PageLoader } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
@@ -94,7 +94,9 @@ export default function Dashboard() {
     api
       .get("/dashboard")
       .then((res) => setData(res.data))
-      .catch((err) => setError(apiError(err)));
+      .catch((err) => {
+        if (!isUnauthorized(err)) setError(apiError(err));
+      });
   }, []);
 
   if (error) return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;

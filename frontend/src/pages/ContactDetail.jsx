@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import api, { apiError } from "../api/client";
+import api, { apiError, isUnauthorized } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
@@ -74,7 +74,9 @@ export default function ContactDetail() {
       const { data } = await api.get(`/contacts/${id}`);
       setContact(data);
     } catch (err) {
-      toast.error(apiError(err));
+      if (!isUnauthorized(err)) {
+        toast.error(apiError(err));
+      }
       navigate("/contacts");
     }
   }, [id, navigate, toast]);
