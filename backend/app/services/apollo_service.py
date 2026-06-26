@@ -4,7 +4,8 @@ Apollo is only used as a *data source*. Nothing is persisted on Apollo's side;
 callers decide what to store in the local CRM database.
 
 Endpoints used (official Apollo API):
-  - People search          : POST /api/v1/mixed_people/search
+  - People API search       : POST /api/v1/mixed_people/api_search  (prospecting; no credits)
+  - People search (legacy)  : POST /api/v1/mixed_people/search
   - Organization search    : POST /api/v1/mixed_companies/search
   - People enrichment      : POST /api/v1/people/match
   - Bulk people enrichment : POST /api/v1/people/bulk_match

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
-import { CompanyLogo, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -25,6 +25,21 @@ function Detail({ label, value, href, icon: IconCmp }) {
   );
 }
 
+const EDIT_FIELDS = [
+  "first_name",
+  "last_name",
+  "full_name",
+  "title",
+  "email",
+  "phone",
+  "linkedin_url",
+  "city",
+  "country",
+  "seniority",
+  "department",
+  "company_id",
+];
+
 export default function ContactDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -34,6 +49,10 @@ export default function ContactDetail() {
   const [enriching, setEnriching] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [companies, setCompanies] = useState([]);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     api
@@ -86,6 +105,52 @@ export default function ContactDetail() {
     }
   };
 
+  const openEdit = async () => {
+    const initial = {};
+    EDIT_FIELDS.forEach((f) => {
+      if (f === "company_id") {
+        initial[f] = contact.company_id ? String(contact.company_id) : "";
+      } else {
+        initial[f] = contact[f] ?? "";
+      }
+    });
+    setEditForm(initial);
+    setShowEdit(true);
+    try {
+      const { data } = await api.get("/companies", { params: { page_size: 200 } });
+      const list = data.items || [];
+      if (contact.company && !list.some((c) => c.id === contact.company.id)) {
+        list.unshift({ id: contact.company.id, name: contact.company.name });
+      }
+      setCompanies(list);
+    } catch {
+      setCompanies(contact.company ? [{ id: contact.company.id, name: contact.company.name }] : []);
+    }
+  };
+
+  const saveEdit = async (e) => {
+    e?.preventDefault();
+    setSavingEdit(true);
+    try {
+      const payload = {};
+      EDIT_FIELDS.forEach((f) => {
+        if (f === "company_id") {
+          payload.company_id = editForm.company_id ? Number(editForm.company_id) : null;
+        } else {
+          payload[f] = editForm[f] === "" ? null : editForm[f];
+        }
+      });
+      const { data } = await api.put(`/contacts/${id}`, payload);
+      setContact(data);
+      setShowEdit(false);
+      toast.success("Contact updated.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   if (!contact) return <PageLoader />;
 
   const name = contact.full_name || `${contact.first_name || ""} ${contact.last_name || ""}`.trim() || "Unknown";
@@ -124,6 +189,9 @@ export default function ContactDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button className="btn-secondary" onClick={openEdit}>
+            <Icon.Edit width={18} height={18} /> Edit
+          </button>
           {isAdmin && contact.apollo_id && (
             <button
               className="btn-secondary"
@@ -232,6 +300,123 @@ export default function ContactDetail() {
           )}
         </div>
       </div>
+
+      <Modal
+        open={showEdit}
+        onClose={() => setShowEdit(false)}
+        title="Edit contact"
+        wide
+        footer={
+          <>
+            <button className="btn-secondary" type="button" onClick={() => setShowEdit(false)}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={saveEdit} disabled={savingEdit}>
+              {savingEdit && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={saveEdit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="First name">
+            <input
+              className="input"
+              value={editForm.first_name || ""}
+              onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+            />
+          </Field>
+          <Field label="Last name">
+            <input
+              className="input"
+              value={editForm.last_name || ""}
+              onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Full name">
+              <input
+                className="input"
+                value={editForm.full_name || ""}
+                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                placeholder="Optional if first and last name are set"
+              />
+            </Field>
+          </div>
+          <Field label="Title">
+            <input
+              className="input"
+              value={editForm.title || ""}
+              onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+            />
+          </Field>
+          <Field label="Email">
+            <input
+              className="input"
+              type="email"
+              value={editForm.email || ""}
+              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+            />
+          </Field>
+          <Field label="Phone">
+            <input
+              className="input"
+              value={editForm.phone || ""}
+              onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+            />
+          </Field>
+          <Field label="LinkedIn">
+            <input
+              className="input"
+              value={editForm.linkedin_url || ""}
+              onChange={(e) => setEditForm({ ...editForm, linkedin_url: e.target.value })}
+            />
+          </Field>
+          <Field label="City">
+            <input
+              className="input"
+              value={editForm.city || ""}
+              onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+            />
+          </Field>
+          <Field label="Country">
+            <input
+              className="input"
+              value={editForm.country || ""}
+              onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+            />
+          </Field>
+          <Field label="Seniority">
+            <input
+              className="input"
+              value={editForm.seniority || ""}
+              onChange={(e) => setEditForm({ ...editForm, seniority: e.target.value })}
+            />
+          </Field>
+          <Field label="Department">
+            <input
+              className="input"
+              value={editForm.department || ""}
+              onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Company">
+              <select
+                className="input"
+                value={editForm.company_id || ""}
+                onChange={(e) => setEditForm({ ...editForm, company_id: e.target.value })}
+              >
+                <option value="">No company</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

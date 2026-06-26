@@ -23,7 +23,8 @@ from app.schemas.company import (
     DomainLookupResult,
     ImportResult,
 )
-from app.schemas.contact import ContactOut, FindPeopleResult
+from app.schemas.contact import BulkEnrichResult, ContactOut, FindPeopleResult
+from app.services.contact_enrich import enrich_contact_apollo
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
@@ -779,6 +780,51 @@ def find_company_people(
     total = pagination.get("total_entries", len(people))
     items = [ContactOut.model_validate(c) for c in saved]
     return FindPeopleResult(created=created, updated=updated, total=total, contacts=items)
+
+
+MAX_COMPANY_CONTACT_ENRICH = 100
+
+
+@router.post("/{company_id}/enrich-contacts", response_model=BulkEnrichResult)
+def enrich_company_contacts(
+    company_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """Match all contacts linked to this company via Apollo people/match."""
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found.")
+
+    contacts = db.execute(
+        select(Contact).where(Contact.company_id == company.id).order_by(Contact.id)
+    ).scalars().all()
+    if not contacts:
+        return BulkEnrichResult()
+    if len(contacts) > MAX_COMPANY_CONTACT_ENRICH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This company has {len(contacts)} contacts; maximum {MAX_COMPANY_CONTACT_ENRICH} per bulk enrich.",
+        )
+
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+
+    result = BulkEnrichResult()
+    for contact in contacts:
+        enrich_result = enrich_contact_apollo(db, client, contact, company=company)
+        if enrich_result.ok:
+            if enrich_result.status == "pending":
+                result.pending += 1
+            else:
+                result.enriched += 1
+        else:
+            result.failed += 1
+            label = contact.full_name or contact.email or f"#{contact.id}"
+            result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
+
+    db.commit()
+    return result
 
 
 @router.post("/{company_id}/find-domain", response_model=DomainLookupResult)

@@ -41,6 +41,16 @@ function Detail({ label, value, href }) {
   );
 }
 
+function canMatchContact(contact) {
+  return (
+    Boolean(contact.apollo_id) ||
+    Boolean(contact.email?.trim()) ||
+    Boolean(contact.linkedin_url?.trim()) ||
+    Boolean(contact.full_name?.trim()) ||
+    Boolean(contact.first_name?.trim() && contact.last_name?.trim())
+  );
+}
+
 export default function CompanyDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -58,6 +68,8 @@ export default function CompanyDetail() {
   const [findingDomain, setFindingDomain] = useState(false);
   const [findingPeople, setFindingPeople] = useState(false);
   const [completingId, setCompletingId] = useState(null);
+  const [matchingId, setMatchingId] = useState(null);
+  const [matchingAll, setMatchingAll] = useState(false);
 
   useEffect(() => {
     api
@@ -148,6 +160,51 @@ export default function CompanyDetail() {
       toast.error(apiError(err));
     } finally {
       setCompletingId(null);
+    }
+  };
+
+  const matchContact = async (contactId) => {
+    setMatchingId(contactId);
+    try {
+      const { data } = await api.post(`/contacts/${contactId}/enrich`);
+      setContacts((prev) => prev.map((c) => (c.id === contactId ? data : c)));
+      toast.success(
+        data.enrichment_status === "pending"
+          ? "Contact matched. Waterfall email may arrive in a few minutes."
+          : "Contact matched via Apollo.",
+      );
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setMatchingId(null);
+    }
+  };
+
+  const matchAllContacts = async () => {
+    if (!contacts.length) return;
+    if (
+      !confirm(
+        `Match all ${contacts.length} contact(s) at this company via Apollo? This uses Apollo credits for each contact.`
+      )
+    ) {
+      return;
+    }
+    setMatchingAll(true);
+    try {
+      const { data: res } = await api.post(`/companies/${id}/enrich-contacts`);
+      const parts = [];
+      if (res.enriched) parts.push(`${res.enriched} enriched`);
+      if (res.pending) parts.push(`${res.pending} pending`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
+      if (res.errors?.length) {
+        toast.info(res.errors.slice(0, 3).join(" · "));
+      }
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setMatchingAll(false);
     }
   };
 
@@ -286,21 +343,38 @@ export default function CompanyDetail() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-ink-500">{contacts.length} contact(s) linked</p>
                 {isAdmin && (
-                <button
-                  className="btn-secondary"
-                  onClick={findPeople}
-                  disabled={findingPeople || !apolloReady || !company.domain}
-                  title={
-                    !company.domain
-                      ? "Add a domain first to find people"
-                      : apolloReady
-                      ? "Find people at this company via Apollo (uses credits)"
-                      : "Apollo is off — enable it in Settings"
-                  }
-                >
-                  {findingPeople ? <Spinner className="h-4 w-4" /> : <Icon.Users width={18} height={18} />}
-                  Find people via Apollo
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="btn-secondary"
+                    onClick={matchAllContacts}
+                    disabled={matchingAll || !apolloReady || contacts.length === 0}
+                    title={
+                      !contacts.length
+                        ? "No contacts to enrich"
+                        : apolloReady
+                          ? "Match all linked contacts via Apollo people/match"
+                          : "Apollo is off — enable it in Settings"
+                    }
+                  >
+                    {matchingAll ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={18} height={18} />}
+                    Match all via Apollo
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={findPeople}
+                    disabled={findingPeople || !apolloReady || !company.domain}
+                    title={
+                      !company.domain
+                        ? "Add a domain first to find people"
+                        : apolloReady
+                          ? "Find new people at this company via Apollo (uses credits)"
+                          : "Apollo is off — enable it in Settings"
+                    }
+                  >
+                    {findingPeople ? <Spinner className="h-4 w-4" /> : <Icon.Users width={18} height={18} />}
+                    Find people via Apollo
+                  </button>
+                </div>
                 )}
               </div>
               {contacts.length === 0 ? (
@@ -340,20 +414,43 @@ export default function CompanyDetail() {
                           <td className="table-td">{ct.email || "—"}</td>
                           <td className="table-td"><StatusBadge status={ct.enrichment_status} /></td>
                           <td className="table-td text-right">
-                            {isAdmin && ct.apollo_id && (
-                              <button
-                                className="btn-ghost px-2 py-1 text-sm"
-                                onClick={() => completePerson(ct.id)}
-                                disabled={completingId === ct.id || !apolloReady}
-                                title={apolloReady ? "Fetch this person's complete info via Apollo (uses credits)" : "Apollo is off — enable it in Settings"}
-                              >
-                                {completingId === ct.id ? (
-                                  <Spinner className="h-4 w-4" />
-                                ) : (
-                                  <Icon.Sparkles width={16} height={16} />
+                            {isAdmin && (
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  className="btn-ghost px-2 py-1 text-sm"
+                                  onClick={() => matchContact(ct.id)}
+                                  disabled={matchingId === ct.id || !apolloReady || !canMatchContact(ct)}
+                                  title={
+                                    !apolloReady
+                                      ? "Apollo is off"
+                                      : !canMatchContact(ct)
+                                        ? "Add email, name, or LinkedIn to match"
+                                        : "Match via Apollo people/match"
+                                  }
+                                >
+                                  {matchingId === ct.id ? (
+                                    <Spinner className="h-4 w-4" />
+                                  ) : (
+                                    <Icon.Sparkles width={16} height={16} />
+                                  )}
+                                  Match
+                                </button>
+                                {ct.apollo_id && (
+                                  <button
+                                    className="btn-ghost px-2 py-1 text-sm"
+                                    onClick={() => completePerson(ct.id)}
+                                    disabled={completingId === ct.id || !apolloReady}
+                                    title={apolloReady ? "Fetch full profile via Apollo" : "Apollo is off"}
+                                  >
+                                    {completingId === ct.id ? (
+                                      <Spinner className="h-4 w-4" />
+                                    ) : (
+                                      <Icon.Sparkles width={16} height={16} />
+                                    )}
+                                    Full profile
+                                  </button>
                                 )}
-                                {ct.enrichment_status === "enriched" ? "Refresh info" : "Get complete info"}
-                              </button>
+                              </div>
                             )}
                           </td>
                         </tr>

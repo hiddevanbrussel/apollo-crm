@@ -76,25 +76,8 @@ def build_person_match_payload(
     run_waterfall_email: bool = True,
 ) -> dict[str, Any]:
     """Build payload for POST /api/v1/people/match from a CRM contact."""
-    from app.services.company_domains import email_domain
-
-    first = (contact.first_name or "").strip() or None
-    last = (contact.last_name or "").strip() or None
-    full = (contact.full_name or "").strip() or None
-
-    if not first and not last and full:
-        first, last = _split_person_name(full)
-
-    if not full and (first or last):
-        full = " ".join(p for p in [first, last] if p)
-
-    domain = None
-    org_name = None
-    if company:
-        domain = (company.domain or "").strip() or None
-        org_name = (company.name or "").strip() or None
-    if not domain and contact.email:
-        domain = email_domain(str(contact.email))
+    first, last, full = _contact_name_parts(contact)
+    domain, org_name = _contact_org_context(contact, company)
 
     payload: dict[str, Any] = {
         "first_name": first,
@@ -149,6 +132,164 @@ def build_person_match_attempts(
         attempts.append(full)
 
     return attempts
+
+
+def _contact_name_parts(contact: Any) -> tuple[str | None, str | None, str | None]:
+    """Return (first_name, last_name, full_name) for a CRM contact."""
+    first = (contact.first_name or "").strip() or None
+    last = (contact.last_name or "").strip() or None
+    full = (contact.full_name or "").strip() or None
+    if not first and not last and full:
+        first, last = _split_person_name(full)
+    if not full and (first or last):
+        full = " ".join(p for p in [first, last] if p)
+    return first, last, full
+
+
+def _contact_org_context(contact: Any, company: Any | None) -> tuple[str | None, str | None]:
+    """Return (employer domain, employer name) for match/search filters."""
+    from app.services.company_domains import email_domain
+
+    domain = None
+    org_name = None
+    if company:
+        domain = (company.domain or "").strip() or None
+        org_name = (company.name or "").strip() or None
+    if not domain and contact.email:
+        domain = email_domain(str(contact.email))
+    return domain, org_name
+
+
+def build_person_search_attempts(
+    contact: Any,
+    company: Any | None = None,
+    *,
+    per_page: int = 10,
+) -> list[dict[str, Any]]:
+    """Build ordered People API Search payloads (mixed_people/api_search).
+
+    Used when people/match returns no person — search by name/company, then enrich by id.
+    """
+    first, last, full = _contact_name_parts(contact)
+    if not full and not (first and last):
+        return []
+
+    q_keywords = full or " ".join(p for p in [first, last] if p)
+    domain, org_name = _contact_org_context(contact, company)
+    title = (contact.title or "").strip() or None
+    linkedin = (contact.linkedin_url or "").strip() or None
+
+    base: dict[str, Any] = {"q_keywords": q_keywords, "page": 1, "per_page": per_page}
+    attempts: list[dict[str, Any]] = []
+
+    if linkedin:
+        attempts.append({**base, "q_keywords": linkedin})
+
+    if domain and title:
+        attempts.append({**base, "q_organization_domains_list": [domain], "person_titles": [title]})
+    if domain:
+        attempts.append({**base, "q_organization_domains_list": [domain]})
+    if org_name:
+        attempts.append({**base, "q_keywords": f"{q_keywords} {org_name}".strip()})
+
+    if not attempts:
+        attempts.append(dict(base))
+
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for attempt in attempts:
+        key = str(sorted(attempt.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(attempt)
+    return unique
+
+
+def _normalize_name_token(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _org_domain(person: dict[str, Any]) -> str | None:
+    org = person.get("organization") or {}
+    domain = _get(org, "primary_domain", "domain")
+    if isinstance(domain, str):
+        return domain.strip().lower() or None
+    return None
+
+
+def score_person_search_candidate(
+    contact: Any,
+    company: Any | None,
+    person: dict[str, Any],
+) -> int:
+    """Score how well an Apollo search hit matches a CRM contact (higher = better)."""
+    first, last, full = _contact_name_parts(contact)
+    expected_domain, _ = _contact_org_context(contact, company)
+
+    score = 0
+    p_first = _normalize_name_token(person.get("first_name"))
+    p_last = _normalize_name_token(person.get("last_name"))
+    p_last_obf = _normalize_name_token(person.get("last_name_obfuscated"))
+    p_name = _normalize_name_token(person.get("name"))
+
+    if first and p_first == _normalize_name_token(first):
+        score += 25
+    if last:
+        last_norm = _normalize_name_token(last)
+        if p_last == last_norm:
+            score += 25
+        elif p_last_obf and last_norm.startswith(p_last_obf.rstrip("*")):
+            score += 20
+    if full and p_name and _normalize_name_token(full) == p_name:
+        score += 15
+
+    contact_title = _normalize_name_token(getattr(contact, "title", None))
+    person_title = _normalize_name_token(person.get("title"))
+    if contact_title and person_title:
+        if contact_title == person_title:
+            score += 15
+        elif contact_title in person_title or person_title in contact_title:
+            score += 8
+
+    if expected_domain:
+        person_domain = _org_domain(person)
+        if person_domain and person_domain == expected_domain.lower():
+            score += 25
+
+    contact_li = (getattr(contact, "linkedin_url", None) or "").strip().lower()
+    person_li = (person.get("linkedin_url") or "").strip().lower()
+    if contact_li and person_li and contact_li.rstrip("/") == person_li.rstrip("/"):
+        score += 40
+
+    return score
+
+
+def pick_best_person_search_match(
+    contact: Any,
+    company: Any | None,
+    people: list[dict[str, Any]],
+    *,
+    min_score: int = 45,
+) -> dict[str, Any] | None:
+    """Pick the best Apollo search result for a CRM contact, or None if uncertain."""
+    if not people:
+        return None
+
+    scored = [(score_person_search_candidate(contact, company, p), p) for p in people]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best = scored[0]
+    if best_score < min_score or not best.get("id"):
+        return None
+
+    if len(scored) > 1:
+        second_score = scored[1][0]
+        _, expected_domain = _contact_org_context(contact, company)
+        if best_score - second_score < 10 and expected_domain:
+            if _org_domain(best) != expected_domain.lower():
+                return None
+
+    return best
 
 
 def has_person_match_criteria(payload: dict[str, Any]) -> bool:
