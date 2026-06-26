@@ -262,18 +262,6 @@ export default function CompanyDetail() {
               <div className="sm:col-span-2 lg:col-span-3">
                 <Detail label="Description" value={company.description} />
               </div>
-              {company.extra_data && Object.keys(company.extra_data).length > 0 && (
-                <div className="sm:col-span-2 lg:col-span-3">
-                  <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-ink-400">
-                    Extra data (from import)
-                  </p>
-                  <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
-                    {Object.entries(company.extra_data).map(([key, value]) => (
-                      <Detail key={key} label={key} value={String(value)} />
-                    ))}
-                  </div>
-                </div>
-              )}
             </dl>
           )}
 
