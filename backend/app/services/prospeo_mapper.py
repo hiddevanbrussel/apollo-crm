@@ -44,6 +44,153 @@ def build_prospeo_enrich_data(contact: Any, company: Any | None = None) -> dict[
     return {k: v for k, v in data.items() if v not in (None, "")}
 
 
+def _normalize_website(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = str(value).strip().lower()
+    if "://" in cleaned:
+        cleaned = cleaned.split("://", 1)[1]
+    cleaned = cleaned.split("/")[0]
+    if cleaned.startswith("www."):
+        cleaned = cleaned[4:]
+    return cleaned or None
+
+
+def build_prospeo_search_filters(
+    contact: Any,
+    company: Any | None = None,
+    *,
+    include_company_website: bool = True,
+    include_company_name: bool = True,
+) -> dict[str, Any] | None:
+    """Build Prospeo search-person filters (person_name + optional company)."""
+    first, last, full = _contact_name_parts(contact)
+    person_name = full or " ".join(p for p in [first, last] if p)
+    if not person_name:
+        return None
+
+    filters: dict[str, Any] = {"person_name": {"include": [person_name]}}
+    domain, org_name = _contact_org_context(contact, company)
+    company_block: dict[str, Any] = {}
+    if include_company_website and domain:
+        website = _normalize_website(domain)
+        if website:
+            company_block["websites"] = {"include": [website]}
+    if include_company_name and org_name:
+        company_block["names"] = {"include": [org_name.strip()]}
+    if company_block:
+        filters["company"] = company_block
+    return filters
+
+
+def build_prospeo_search_attempts(contact: Any, company: Any | None = None) -> list[dict[str, Any]]:
+    """Ordered search-person filter payloads: name+website+company → name only."""
+    domain, org_name = _contact_org_context(contact, company)
+    attempts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(**kwargs: bool) -> None:
+        payload = build_prospeo_search_filters(contact, company, **kwargs)
+        if not payload:
+            return
+        key = str(sorted(payload.items()))
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append(payload)
+
+    if domain and org_name:
+        add(include_company_website=True, include_company_name=True)
+    if domain:
+        add(include_company_website=True, include_company_name=False)
+    if org_name:
+        add(include_company_website=False, include_company_name=True)
+    add(include_company_website=False, include_company_name=False)
+    return attempts
+
+
+def has_prospeo_search_criteria(contact: Any, company: Any | None = None) -> bool:
+    return bool(build_prospeo_search_attempts(contact, company))
+
+
+def _normalize_name_token(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def score_prospeo_search_candidate(
+    contact: Any,
+    company: Any | None,
+    result: dict[str, Any],
+) -> int:
+    """Score a Prospeo search-person hit against a CRM contact."""
+    person = result.get("person") or {}
+    comp = result.get("company") or {}
+    first, last, full = _contact_name_parts(contact)
+    expected_domain, expected_org = _contact_org_context(contact, company)
+
+    score = 0
+    p_first = _normalize_name_token(person.get("first_name"))
+    p_last = _normalize_name_token(person.get("last_name"))
+    p_name = _normalize_name_token(person.get("full_name"))
+
+    if first and p_first == _normalize_name_token(first):
+        score += 25
+    if last and p_last == _normalize_name_token(last):
+        score += 25
+    if full and p_name == _normalize_name_token(full):
+        score += 20
+
+    contact_title = _normalize_name_token(getattr(contact, "title", None))
+    person_title = _normalize_name_token(person.get("current_job_title"))
+    if contact_title and person_title:
+        if contact_title == person_title:
+            score += 15
+        elif contact_title in person_title or person_title in contact_title:
+            score += 8
+
+    result_domain = _normalize_website(comp.get("domain") or comp.get("website"))
+    if expected_domain:
+        expected = _normalize_website(expected_domain)
+        if expected and result_domain == expected:
+            score += 30
+    if expected_org and comp.get("name"):
+        if expected_org.lower() in str(comp.get("name")).lower():
+            score += 15
+
+    return score
+
+
+def pick_best_prospeo_search_match(
+    contact: Any,
+    company: Any | None,
+    results: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not results:
+        return None
+
+    scored = [(score_prospeo_search_candidate(contact, company, r), r) for r in results]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best = scored[0]
+    if not (best.get("person") or {}).get("person_id"):
+        return None
+
+    if len(results) == 1:
+        return best
+
+    if best_score < 20:
+        return None
+
+    if len(scored) > 1 and best_score - scored[1][0] < 10:
+        expected_domain, _ = _contact_org_context(contact, company)
+        if expected_domain:
+            comp = best.get("company") or {}
+            result_domain = _normalize_website(comp.get("domain") or comp.get("website"))
+            if result_domain != _normalize_website(expected_domain):
+                return None
+
+    return best
+
+
 def has_prospeo_match_criteria(data: dict[str, Any]) -> bool:
     """Return True when Prospeo minimum matching requirements are met."""
     if data.get("person_id") or data.get("email") or data.get("linkedin_url"):

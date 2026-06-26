@@ -25,9 +25,12 @@ from app.services.apollo_webhook import (
 )
 from app.services.prospeo_mapper import (
     build_prospeo_enrich_data,
+    build_prospeo_search_attempts,
     has_prospeo_match_criteria,
+    has_prospeo_search_criteria,
     map_prospeo_organization,
     map_prospeo_person,
+    pick_best_prospeo_search_match,
 )
 from app.services.prospeo_service import ProspeoError, ProspeoService
 from app.services.settings_service import (
@@ -42,6 +45,7 @@ from app.services.settings_service import (
 PEOPLE_MATCH_ENDPOINT = "/api/v1/people/match"
 PEOPLE_SEARCH_ENDPOINT = "/api/v1/mixed_people/api_search"
 PROSPEO_ENRICH_ENDPOINT = "/enrich-person"
+PROSPEO_SEARCH_ENDPOINT = "/search-person"
 
 
 @dataclass
@@ -320,6 +324,46 @@ def enrich_contact_apollo(
     return EnrichContactResult(ok=True, status=final_status, provider="apollo")
 
 
+def _try_prospeo_search_then_enrich(
+    client: ProspeoService,
+    contact: Contact,
+    company: Company | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Prospeo search-person → enrich-person by person_id."""
+    search_attempts = build_prospeo_search_attempts(contact, company)
+    last_filters: dict[str, Any] | None = None
+
+    for filters in search_attempts:
+        last_filters = filters
+        try:
+            search_response = client.search_person(filters)
+        except ProspeoError as exc:
+            if exc.error_code in ("NO_RESULTS", "INVALID_FILTERS"):
+                continue
+            raise
+
+        results = search_response.get("results") or []
+        best = pick_best_prospeo_search_match(contact, company, results)
+        if not best:
+            continue
+
+        person_id = (best.get("person") or {}).get("person_id")
+        if not person_id:
+            continue
+
+        try:
+            enrich_response = client.enrich_person({"person_id": person_id})
+        except ProspeoError:
+            continue
+
+        if not (enrich_response.get("person") or {}).get("person_id"):
+            continue
+
+        return enrich_response, filters
+
+    return {}, last_filters
+
+
 def enrich_contact_prospeo(
     db: Session,
     client: ProspeoService,
@@ -327,24 +371,75 @@ def enrich_contact_prospeo(
     *,
     company: Company | None = None,
 ) -> EnrichContactResult:
-    """Enrich one contact via Prospeo POST /enrich-person."""
+    """Enrich one contact via Prospeo enrich-person, with search-person fallback."""
     if company is None and contact.company_id:
         company = db.get(Company, contact.company_id)
 
     data = build_prospeo_enrich_data(contact, company)
-    if not has_prospeo_match_criteria(data):
+    can_enrich = has_prospeo_match_criteria(data)
+    can_search = has_prospeo_search_criteria(contact, company)
+    if not can_enrich and not can_search:
         contact.enrichment_status = "failed"
         return EnrichContactResult(
             ok=False,
             status="failed",
-            error="Not enough data for Prospeo (need email, LinkedIn, or name + company).",
+            error="Not enough data for Prospeo (need a name, email, or LinkedIn URL).",
             provider="prospeo",
         )
 
     log_data = {k: v for k, v in data.items() if k != "email"}
-    try:
-        response = client.enrich_person(data)
-    except ProspeoError as exc:
+    enrich_strategy = "direct"
+    search_filters_used: dict[str, Any] | None = None
+    response: dict[str, Any] = {}
+    last_exc: ProspeoError | None = None
+
+    if can_enrich:
+        try:
+            response = client.enrich_person(data)
+        except ProspeoError as exc:
+            last_exc = exc
+            if exc.error_code not in ("NO_MATCH", "INVALID_DATAPOINTS"):
+                contact.enrichment_status = "failed"
+                db.add(
+                    EnrichmentLog(
+                        entity_type="contact",
+                        entity_id=contact.id,
+                        endpoint=PROSPEO_ENRICH_ENDPOINT,
+                        request_payload=log_data,
+                        response_status=exc.status_code or 400,
+                    )
+                )
+                return EnrichContactResult(
+                    ok=False, status="failed", error=exc.message, provider="prospeo"
+                )
+
+    if not response and can_search:
+        try:
+            response, search_filters_used = _try_prospeo_search_then_enrich(client, contact, company)
+        except ProspeoError as exc:
+            last_exc = exc
+            contact.enrichment_status = "failed"
+            db.add(
+                EnrichmentLog(
+                    entity_type="contact",
+                    entity_id=contact.id,
+                    endpoint=PROSPEO_SEARCH_ENDPOINT,
+                    request_payload=search_filters_used or {},
+                    response_status=exc.status_code or 400,
+                )
+            )
+            return EnrichContactResult(
+                ok=False, status="failed", error=exc.message, provider="prospeo"
+            )
+        if response:
+            enrich_strategy = "search_then_enrich"
+            log_data = {
+                **log_data,
+                "enrich_strategy": enrich_strategy,
+                "search_filters": search_filters_used,
+            }
+
+    if not response:
         contact.enrichment_status = "failed"
         db.add(
             EnrichmentLog(
@@ -352,17 +447,32 @@ def enrich_contact_prospeo(
                 entity_id=contact.id,
                 endpoint=PROSPEO_ENRICH_ENDPOINT,
                 request_payload=log_data,
-                response_status=exc.status_code or 400,
+                response_status=last_exc.status_code if last_exc else 404,
             )
         )
-        if exc.error_code == "NO_MATCH":
+        if search_filters_used:
+            db.add(
+                EnrichmentLog(
+                    entity_type="contact",
+                    entity_id=contact.id,
+                    endpoint=PROSPEO_SEARCH_ENDPOINT,
+                    request_payload=search_filters_used,
+                    response_status=404,
+                )
+            )
+        if last_exc and last_exc.error_code == "NO_MATCH":
             return EnrichContactResult(
                 ok=False,
                 status="failed",
                 error="Prospeo found no matching person.",
                 provider="prospeo",
             )
-        return EnrichContactResult(ok=False, status="failed", error=exc.message, provider="prospeo")
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Prospeo found no matching person.",
+            provider="prospeo",
+        )
 
     mapped = map_prospeo_person(response)
     if not mapped:
@@ -394,6 +504,16 @@ def enrich_contact_prospeo(
             response_status=200,
         )
     )
+    if search_filters_used and enrich_strategy == "search_then_enrich":
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint=PROSPEO_SEARCH_ENDPOINT,
+                request_payload=search_filters_used,
+                response_status=200,
+            )
+        )
     return EnrichContactResult(ok=True, status="enriched", provider="prospeo")
 
 

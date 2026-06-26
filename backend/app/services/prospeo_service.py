@@ -100,6 +100,10 @@ class ProspeoService:
             payload["enrich_mobile"] = True
         return self._post("/enrich-person", payload)
 
+    def search_person(self, filters: dict[str, Any], *, page: int = 1) -> dict[str, Any]:
+        """POST /search-person — find people by filters (no revealed email/phone)."""
+        return self._post("/search-person", {"page": page, "filters": filters})
+
     def get_account(self) -> dict[str, Any]:
         """GET /account-information — free connectivity/credits check."""
         return self._get("/account-information")
