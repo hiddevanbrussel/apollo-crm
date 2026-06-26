@@ -73,14 +73,25 @@ class ApolloService:
         except ValueError as exc:
             raise ApolloError("Apollo returned an invalid JSON response.", status_code=502) from exc
 
-    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         self._require_key()
         url = f"{self.base_url}{path}"
         # Never log the full API key.
         logger.info("Apollo POST %s (key=%s)", path, mask_api_key(self.api_key))
         try:
             with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-                response = client.post(url, json=payload, headers=self._headers())
+                response = client.post(
+                    url,
+                    json=payload if payload is not None else None,
+                    params=params,
+                    headers=self._headers(),
+                )
         except httpx.HTTPError as exc:
             raise ApolloError(f"Could not reach Apollo API: {exc}", status_code=502) from exc
         return self._handle_response(response)
@@ -144,9 +155,12 @@ class ApolloService:
         return self._post("/api/v1/mixed_companies/search", payload)
 
     def enrich_person(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Enrich a single person via /people/match."""
-        payload = self._clean(data)
-        return self._post("/api/v1/people/match", payload)
+        """Enrich a single person via /people/match (query parameters)."""
+        params = self._clean(data)
+        for key, value in list(params.items()):
+            if isinstance(value, bool):
+                params[key] = str(value).lower()
+        return self._post("/api/v1/people/match", params=params)
 
     def enrich_people_bulk(self, data: dict[str, Any]) -> dict[str, Any]:
         """Enrich multiple people via /people/bulk_match."""

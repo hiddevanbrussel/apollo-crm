@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     # Apollo
     APOLLO_BASE_URL: str = "https://api.apollo.io"
+    # Public URL of this CRM (e.g. https://ai.xential.nl). Required for Apollo waterfall webhooks.
+    PUBLIC_BASE_URL: str = ""
+    # Optional secret token in Apollo webhook URLs. When empty, derived from JWT_SECRET.
+    APOLLO_WEBHOOK_SECRET: str = ""
 
     # CORS (comma separated string in env; use the cors_origins property for a list)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:8080"

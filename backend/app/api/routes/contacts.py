@@ -29,6 +29,7 @@ from app.services.import_service import (
     extract_contact_row,
     parse_contact_spreadsheet,
 )
+from app.services.apollo_webhook import build_contact_webhook_url, redact_match_log_payload
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -622,6 +623,20 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
                 "LinkedIn URL, full name, or first and last name."
             ),
         )
+
+    if request_payload.get("run_waterfall_email"):
+        webhook_url = build_contact_webhook_url(contact.id)
+        if not webhook_url:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "PUBLIC_BASE_URL is not configured. Set this environment variable "
+                    "(e.g. https://ai.xential.nl) to use waterfall email enrichment."
+                ),
+            )
+        request_payload["webhook_url"] = webhook_url
+
+    log_payload = redact_match_log_payload(request_payload)
     _ensure_apollo_enabled(db)
     client = build_client(db)
     try:
@@ -633,7 +648,7 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
                 entity_type="contact",
                 entity_id=contact.id,
                 endpoint="/api/v1/people/match",
-                request_payload={k: v for k, v in request_payload.items() if k != "email"},
+                request_payload=log_payload,
                 response_status=exc.status_code,
             )
         )
@@ -648,7 +663,7 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
                 entity_type="contact",
                 entity_id=contact.id,
                 endpoint="/api/v1/people/match",
-                request_payload={k: v for k, v in request_payload.items() if k != "email"},
+                request_payload=log_payload,
                 response_status=404,
             )
         )
@@ -698,13 +713,28 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
         if existing_company:
             contact.company_id = existing_company.id
 
-    contact.enrichment_status = "enriched"
+    waterfall = response.get("waterfall") or {}
+    wf_status = (waterfall.get("status") or "").lower()
+    merged_apollo = dict(contact.apollo_data or {})
+    if response.get("request_id") or waterfall:
+        merged_apollo["waterfall_request"] = {
+            "request_id": response.get("request_id"),
+            "status": waterfall.get("status"),
+            "message": waterfall.get("message"),
+        }
+        contact.apollo_data = merged_apollo
+
+    if wf_status == "accepted":
+        contact.enrichment_status = "pending"
+    else:
+        contact.enrichment_status = "enriched"
+
     db.add(
         EnrichmentLog(
             entity_type="contact",
             entity_id=contact.id,
             endpoint="/api/v1/people/match",
-            request_payload={k: v for k, v in request_payload.items() if k != "email"},
+            request_payload=log_payload,
             response_status=200,
         )
     )

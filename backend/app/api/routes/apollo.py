@@ -128,9 +128,15 @@ def enrich_person(
     _: User = Depends(get_admin_user),
 ):
     _ensure_enabled(db)
+    data = payload.model_dump(exclude_none=True)
+    if data.get("run_waterfall_email") and not data.get("webhook_url"):
+        raise HTTPException(
+            status_code=400,
+            detail="webhook_url is required when run_waterfall_email is enabled.",
+        )
     client = build_client(db)
     try:
-        response = client.enrich_person(payload.model_dump(exclude_none=True))
+        response = client.enrich_person(data)
     except ApolloError as exc:
         _handle_apollo_error(exc)
     db.add(

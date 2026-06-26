@@ -61,7 +61,11 @@ export default function ContactDetail() {
     try {
       const { data } = await api.post(`/contacts/${id}/enrich`);
       setContact(data);
-      toast.success("Contact matched and enriched via Apollo.");
+      toast.success(
+        data.enrichment_status === "pending"
+          ? "Contact matched. Waterfall email enrichment is in progress — results arrive in a few minutes."
+          : "Contact matched and enriched via Apollo.",
+      );
     } catch (err) {
       toast.error(apiError(err));
     } finally {
