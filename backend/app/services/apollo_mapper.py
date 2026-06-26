@@ -53,7 +53,7 @@ def build_email_only_match_payload(
     contact: Any,
     *,
     reveal_personal_emails: bool = True,
-    run_waterfall_email: bool = True,
+    run_waterfall_email: bool = False,
 ) -> dict[str, Any]:
     """Minimal people/match payload: email only (strongest identifier when present)."""
     email = str(contact.email).strip() if contact.email else None
@@ -68,20 +68,44 @@ def build_email_only_match_payload(
     return {k: v for k, v in payload.items() if v not in (None, "")}
 
 
+def build_name_org_match_payload(
+    contact: Any,
+    company: Any | None = None,
+    *,
+    reveal_personal_emails: bool = True,
+    run_waterfall_email: bool = False,
+) -> dict[str, Any]:
+    """Minimal people/match payload: full name + employer name (Apollo-recommended combo)."""
+    first, last, full = _contact_name_parts(contact)
+    _, org_name = _contact_org_context(contact, company)
+    person_name = full or " ".join(p for p in [first, last] if p) or None
+    if not person_name or not org_name:
+        return {}
+
+    payload: dict[str, Any] = {
+        "name": person_name,
+        "organization_name": org_name,
+        "reveal_personal_emails": reveal_personal_emails,
+        "run_waterfall_email": run_waterfall_email,
+    }
+    apollo_id = (contact.apollo_id or "").strip() if contact.apollo_id else None
+    if apollo_id:
+        payload["id"] = apollo_id
+    return payload
+
+
 def build_person_match_payload(
     contact: Any,
     company: Any | None = None,
     *,
     reveal_personal_emails: bool = True,
-    run_waterfall_email: bool = True,
+    run_waterfall_email: bool = False,
 ) -> dict[str, Any]:
     """Build payload for POST /api/v1/people/match from a CRM contact."""
     first, last, full = _contact_name_parts(contact)
     domain, org_name = _contact_org_context(contact, company)
 
     payload: dict[str, Any] = {
-        "first_name": first,
-        "last_name": last,
         "name": full,
         "email": str(contact.email).strip() if contact.email else None,
         "linkedin_url": (contact.linkedin_url or "").strip() or None,
@@ -90,6 +114,10 @@ def build_person_match_payload(
         "reveal_personal_emails": reveal_personal_emails,
         "run_waterfall_email": run_waterfall_email,
     }
+    # Apollo: use name OR first_name+last_name, not both.
+    if not full:
+        payload["first_name"] = first
+        payload["last_name"] = last
     apollo_id = (contact.apollo_id or "").strip() if contact.apollo_id else None
     if apollo_id:
         payload["id"] = apollo_id
@@ -114,22 +142,28 @@ def build_person_match_attempts(
     company: Any | None = None,
     *,
     reveal_personal_emails: bool = True,
-    run_waterfall_email: bool = True,
+    run_waterfall_email: bool = False,
 ) -> list[dict[str, Any]]:
-    """Build ordered people/match payloads: email-only first, then full criteria."""
+    """Build ordered people/match payloads: email-only, name+org, then full criteria."""
     kwargs = {
         "reveal_personal_emails": reveal_personal_emails,
         "run_waterfall_email": run_waterfall_email,
     }
     attempts: list[dict[str, Any]] = []
+    seen: set[str] = set()
 
-    email_only = build_email_only_match_payload(contact, **kwargs)
-    if email_only.get("email"):
-        attempts.append(email_only)
+    def add(payload: dict[str, Any]) -> None:
+        if not has_person_match_criteria(payload):
+            return
+        key = str(sorted(payload.items()))
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append(payload)
 
-    full = build_person_match_payload(contact, company, **kwargs)
-    if has_person_match_criteria(full) and full not in attempts:
-        attempts.append(full)
+    add(build_email_only_match_payload(contact, **kwargs))
+    add(build_name_org_match_payload(contact, company, **kwargs))
+    add(build_person_match_payload(contact, company, **kwargs))
 
     return attempts
 

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = ""
     # Optional secret token in Apollo webhook URLs. When empty, derived from JWT_SECRET.
     APOLLO_WEBHOOK_SECRET: str = ""
+    # Waterfall enrichment queries third-party sources and may share data with Apollo. Off by default.
+    APOLLO_WATERFALL_ENABLED: bool = False
 
     # CORS (comma separated string in env; use the cors_origins property for a list)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:8080"

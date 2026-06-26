@@ -15,7 +15,7 @@ from app.schemas.apollo import (
     PersonEnrichInput,
     SaveSelection,
 )
-from app.services.apollo_mapper import map_organization, map_person
+from app.services.apollo_webhook import waterfall_enrichment_enabled
 from app.services.apollo_service import ApolloError
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
@@ -159,7 +159,10 @@ def enrich_person(
 ):
     _ensure_enabled(db)
     data = payload.model_dump(exclude_none=True)
-    if data.get("run_waterfall_email") and not data.get("webhook_url"):
+    if not waterfall_enrichment_enabled():
+        data["run_waterfall_email"] = False
+        data.pop("webhook_url", None)
+    elif data.get("run_waterfall_email") and not data.get("webhook_url"):
         raise HTTPException(
             status_code=400,
             detail="webhook_url is required when run_waterfall_email is enabled.",

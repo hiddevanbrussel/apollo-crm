@@ -18,7 +18,11 @@ from app.services.apollo_mapper import (
     pick_best_person_search_match,
 )
 from app.services.apollo_service import ApolloError, ApolloService
-from app.services.apollo_webhook import build_contact_webhook_url, redact_match_log_payload
+from app.services.apollo_webhook import (
+    build_contact_webhook_url,
+    redact_match_log_payload,
+    waterfall_enrichment_enabled,
+)
 
 PEOPLE_MATCH_ENDPOINT = "/api/v1/people/match"
 PEOPLE_SEARCH_ENDPOINT = "/api/v1/mixed_people/api_search"
@@ -67,6 +71,14 @@ def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, An
             contact.company_id = existing_company.id
 
 
+def _match_strategy_label(payload: dict[str, Any]) -> str:
+    if payload.get("email") and not payload.get("name") and not payload.get("first_name"):
+        return "email_only"
+    if payload.get("name") and payload.get("organization_name") and not payload.get("domain"):
+        return "name_organization"
+    return "full"
+
+
 def _try_people_match(
     client: ApolloService,
     match_attempts: list[dict[str, Any]],
@@ -81,7 +93,7 @@ def _try_people_match(
         person = attempt_response.get("person") or {}
         if person_match_is_empty(person):
             continue
-        strategy = "email_only" if idx == 0 and payload.get("email") else "full"
+        strategy = _match_strategy_label(payload)
         return attempt_response, payload, strategy, None
     return {}, {}, "full", last_exc
 
@@ -93,7 +105,7 @@ def _try_search_then_match(
     *,
     webhook_url: str | None,
     reveal_personal_emails: bool = True,
-    run_waterfall_email: bool = True,
+    run_waterfall_email: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     """People API Search → people/match by Apollo id when direct match fails."""
     search_attempts = build_person_search_attempts(contact, company)
@@ -152,7 +164,11 @@ def enrich_contact_apollo(
     if company is None and contact.company_id:
         company = db.get(Company, contact.company_id)
 
-    match_attempts = build_person_match_attempts(contact, company)
+    match_attempts = build_person_match_attempts(
+        contact,
+        company,
+        run_waterfall_email=waterfall_enrichment_enabled(),
+    )
     if not match_attempts:
         contact.enrichment_status = "failed"
         return EnrichContactResult(
@@ -162,7 +178,7 @@ def enrich_contact_apollo(
         )
 
     reveal_personal_emails = bool(match_attempts[0].get("reveal_personal_emails", True))
-    run_waterfall_email = bool(match_attempts[0].get("run_waterfall_email", True))
+    run_waterfall_email = bool(match_attempts[0].get("run_waterfall_email", False))
 
     webhook_url: str | None = None
     if run_waterfall_email:

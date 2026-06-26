@@ -26,6 +26,11 @@ def public_base_url_configured() -> bool:
     return bool((settings.PUBLIC_BASE_URL or "").strip())
 
 
+def waterfall_enrichment_enabled() -> bool:
+    """Whether Apollo waterfall email/phone enrichment is allowed."""
+    return bool(settings.APOLLO_WATERFALL_ENABLED)
+
+
 def build_contact_webhook_url(contact_id: int) -> str | None:
     """Public HTTPS URL Apollo POSTs waterfall results to."""
     base = (settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
