@@ -69,6 +69,19 @@ class ContactList(BaseModel):
     page_size: int
 
 
+class ContactCompanyOption(BaseModel):
+    id: int
+    name: str
+
+
+class ContactFilterOptions(BaseModel):
+    countries: list[str]
+    cities: list[str]
+    seniorities: list[str]
+    departments: list[str]
+    companies: list[ContactCompanyOption]
+
+
 class BulkDeleteRequest(BaseModel):
     ids: list[int] = Field(default_factory=list)
 

@@ -176,4 +176,9 @@ export const Icon = {
       <path d="M12 15V3" />
     </svg>
   ),
+  Bookmark: (p) => (
+    <svg {...base} {...p}>
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16Z" />
+    </svg>
+  ),
 };

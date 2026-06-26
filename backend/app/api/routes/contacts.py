@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+import csv
+import io
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
@@ -9,7 +12,9 @@ from app.models import Company, Contact, EnrichmentLog, User
 from app.schemas.contact import (
     BulkDeleteRequest,
     BulkDeleteResult,
+    ContactCompanyOption,
     ContactCreate,
+    ContactFilterOptions,
     ContactImportResult,
     ContactList,
     ContactOut,
@@ -27,8 +32,49 @@ from app.services.import_service import (
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_EXPORT_ROWS = 10_000
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
+
+
+def _apply_contact_filters(
+    stmt,
+    *,
+    search: str | None = None,
+    company_id: int | None = None,
+    source: str | None = None,
+    enrichment_status: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    seniority: str | None = None,
+    department: str | None = None,
+):
+    if search:
+        like = f"%{search.lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(Contact.full_name).like(like),
+                func.lower(Contact.first_name).like(like),
+                func.lower(Contact.last_name).like(like),
+                func.lower(Contact.title).like(like),
+                func.lower(Contact.email).like(like),
+            )
+        )
+    if company_id:
+        stmt = stmt.where(Contact.company_id == company_id)
+    if source:
+        stmt = stmt.where(Contact.source == source)
+    if enrichment_status:
+        stmt = stmt.where(Contact.enrichment_status == enrichment_status)
+    if country:
+        stmt = stmt.where(func.lower(Contact.country) == country.lower())
+    if city:
+        stmt = stmt.where(func.lower(Contact.city) == city.lower())
+    if seniority:
+        stmt = stmt.where(func.lower(Contact.seniority) == seniority.lower())
+    if department:
+        stmt = stmt.where(func.lower(Contact.department) == department.lower())
+    return stmt
 
 
 def _ensure_apollo_enabled(db: Session) -> None:
@@ -52,33 +98,140 @@ def list_contacts(
     company_id: int | None = None,
     source: str | None = None,
     enrichment_status: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    seniority: str | None = None,
+    department: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    stmt = select(Contact)
-    if search:
-        like = f"%{search.lower()}%"
-        stmt = stmt.where(
-            or_(
-                func.lower(Contact.full_name).like(like),
-                func.lower(Contact.first_name).like(like),
-                func.lower(Contact.last_name).like(like),
-                func.lower(Contact.title).like(like),
-                func.lower(Contact.email).like(like),
-            )
-        )
-    if company_id:
-        stmt = stmt.where(Contact.company_id == company_id)
-    if source:
-        stmt = stmt.where(Contact.source == source)
-    if enrichment_status:
-        stmt = stmt.where(Contact.enrichment_status == enrichment_status)
+    stmt = _apply_contact_filters(
+        select(Contact),
+        search=search,
+        company_id=company_id,
+        source=source,
+        enrichment_status=enrichment_status,
+        country=country,
+        city=city,
+        seniority=seniority,
+        department=department,
+    )
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     stmt = stmt.order_by(Contact.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
     contacts = db.execute(stmt).scalars().all()
     items = [ContactOut.model_validate(c) for c in contacts]
     return ContactList(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get("/filter-options", response_model=ContactFilterOptions)
+def contact_filter_options(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    def _distinct(column):
+        rows = db.execute(
+            select(column)
+            .where(column.is_not(None), func.trim(column) != "")
+            .distinct()
+            .order_by(column)
+        ).all()
+        return [r[0] for r in rows]
+
+    company_rows = db.execute(
+        select(Company.id, Company.name)
+        .join(Contact, Contact.company_id == Company.id)
+        .distinct()
+        .order_by(Company.name)
+    ).all()
+
+    return ContactFilterOptions(
+        countries=_distinct(Contact.country),
+        cities=_distinct(Contact.city),
+        seniorities=_distinct(Contact.seniority),
+        departments=_distinct(Contact.department),
+        companies=[ContactCompanyOption(id=r.id, name=r.name) for r in company_rows],
+    )
+
+
+@router.get("/export")
+def export_contacts(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+    search: str | None = None,
+    company_id: int | None = None,
+    source: str | None = None,
+    enrichment_status: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    seniority: str | None = None,
+    department: str | None = None,
+):
+    """Export filtered contacts as CSV (max 10,000 rows)."""
+    stmt = _apply_contact_filters(
+        select(Contact),
+        search=search,
+        company_id=company_id,
+        source=source,
+        enrichment_status=enrichment_status,
+        country=country,
+        city=city,
+        seniority=seniority,
+        department=department,
+    )
+    stmt = stmt.order_by(Contact.updated_at.desc()).limit(MAX_EXPORT_ROWS)
+    contacts = db.execute(stmt).scalars().all()
+
+    company_ids = {c.company_id for c in contacts if c.company_id}
+    companies: dict[int, Company] = {}
+    if company_ids:
+        rows = db.execute(select(Company).where(Company.id.in_(company_ids))).scalars().all()
+        companies = {c.id: c for c in rows}
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(
+        [
+            "full_name",
+            "first_name",
+            "last_name",
+            "email",
+            "title",
+            "company",
+            "phone",
+            "linkedin_url",
+            "city",
+            "country",
+            "seniority",
+            "department",
+            "source",
+            "enrichment_status",
+        ]
+    )
+    for c in contacts:
+        comp = companies.get(c.company_id) if c.company_id else None
+        writer.writerow(
+            [
+                c.full_name or "",
+                c.first_name or "",
+                c.last_name or "",
+                c.email or "",
+                c.title or "",
+                comp.name if comp else "",
+                c.phone or "",
+                c.linkedin_url or "",
+                c.city or "",
+                c.country or "",
+                c.seniority or "",
+                c.department or "",
+                c.source or "",
+                c.enrichment_status or "",
+            ]
+        )
+
+    content = buffer.getvalue()
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="contacts-export.csv"'},
+    )
 
 
 def _check_duplicate(db: Session, email: str | None, apollo_id: str | None, exclude_id: int | None = None):

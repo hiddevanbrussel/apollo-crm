@@ -35,6 +35,7 @@ from app.services.company_import_fields import (
     parse_revenue_2025,
 )
 from app.services.country_normalize import normalize_country
+from app.services.industry_normalize import normalize_industry
 from app.services.groq_service import GroqError
 from app.services.import_service import (
     ImportParseError,
@@ -217,6 +218,8 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db), _: Use
     company = Company(**payload.model_dump())
     if company.country:
         company.country = normalize_country(company.country)
+    if company.industry:
+        company.industry = normalize_industry(company.industry)
     db.add(company)
     db.commit()
     db.refresh(company)
@@ -516,6 +519,8 @@ def update_company(
     data = payload.model_dump(exclude_unset=True)
     if data.get("country"):
         data["country"] = normalize_country(data["country"])
+    if data.get("industry"):
+        data["industry"] = normalize_industry(data["industry"])
     if "domain" in data and data["domain"] and data["domain"].lower() != (company.domain or "").lower():
         clash = db.execute(
             select(Company).where(func.lower(Company.domain) == data["domain"].lower())

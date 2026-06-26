@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.industry_normalize import normalize_industry
+
 
 def _get(d: dict[str, Any] | None, *keys: str) -> Any:
     if not d:
@@ -25,7 +27,7 @@ def map_organization(org: dict[str, Any]) -> dict[str, Any]:
         "domain": _get(org, "primary_domain", "domain", "website_url"),
         "website": _get(org, "website_url", "domain"),
         "linkedin_url": _get(org, "linkedin_url"),
-        "industry": _get(org, "industry"),
+        "industry": normalize_industry(_get(org, "industry")),
         "employee_count": _get(org, "estimated_num_employees", "organization_num_employees"),
         "revenue": _to_int(_get(org, "annual_revenue")),
         "country": _get(org, "country"),
