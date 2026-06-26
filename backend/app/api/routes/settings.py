@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_user, get_current_user
@@ -15,8 +15,11 @@ from app.schemas.settings import (
     IntegrationsStatusOut,
     LogokitSettingsOut,
     LogokitSettingsUpdate,
+    LogokitClientConfig,
+    LogokitTestInput,
     LogokitTestResult,
 )
+from app.services.logokit_service import LogokitService, validate_publishable_token
 from app.services.settings_service import (
     build_client,
     build_groq_client,
@@ -158,6 +161,20 @@ def get_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_ad
     return _logokit_to_out(get_or_create_logokit_settings(db))
 
 
+@router.get("/logokit/client-config", response_model=LogokitClientConfig)
+def get_logokit_client_config(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Publishable Logo API config for rendering logos in the UI (all signed-in users)."""
+    row = get_or_create_logokit_settings(db)
+    token = get_decrypted_logokit_token(row)
+    configured = logokit_is_configured(row) and bool(token)
+    return LogokitClientConfig(
+        enabled=row.enabled and configured,
+        configured=configured,
+        token=token if row.enabled and configured else None,
+        base_url=row.base_url,
+    )
+
+
 @router.put("/logokit", response_model=LogokitSettingsOut)
 def update_logokit_settings(
     payload: LogokitSettingsUpdate,
@@ -168,7 +185,11 @@ def update_logokit_settings(
     if payload.clear_token:
         row.api_key_encrypted = None
     elif payload.token:
-        set_logokit_token(row, payload.token.strip())
+        token = payload.token.strip()
+        token_error = validate_publishable_token(token)
+        if token_error:
+            raise HTTPException(status_code=400, detail=token_error)
+        set_logokit_token(row, token)
     if payload.base_url is not None and payload.base_url.strip():
         row.base_url = payload.base_url.strip().rstrip("/")
     if payload.enabled is not None:
@@ -179,10 +200,26 @@ def update_logokit_settings(
 
 
 @router.post("/logokit/test", response_model=LogokitTestResult)
-def test_logokit_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+def test_logokit_settings(
+    payload: LogokitTestInput | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
     row = get_or_create_logokit_settings(db)
-    if not logokit_is_configured(row):
+    stored_token = get_decrypted_logokit_token(row)
+    token = (payload.token.strip() if payload and payload.token else None) or stored_token
+    if not token:
+        if row.api_key_encrypted and not stored_token:
+            return LogokitTestResult(
+                success=False,
+                message=(
+                    "Token is stored but could not be decrypted. "
+                    "Re-enter your pk_ token and save, or check ENCRYPTION_KEY."
+                ),
+                status_code=400,
+            )
         return LogokitTestResult(success=False, message="No Logokit token configured.", status_code=400)
-    client = build_logokit_client(db)
+
+    client = LogokitService(token=token, base_url=row.base_url)
     ok, message, status_code = client.test_connection()
     return LogokitTestResult(success=ok, message=message, status_code=status_code)

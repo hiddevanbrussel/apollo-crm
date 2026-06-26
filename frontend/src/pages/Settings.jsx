@@ -307,7 +307,8 @@ export default function Settings() {
     setLogokitTesting(true);
     setLogokitTest(null);
     try {
-      const { data } = await api.post("/settings/logokit/test");
+      const body = logokitToken.trim() ? { token: logokitToken.trim() } : {};
+      const { data } = await api.post("/settings/logokit/test", body);
       setLogokitTest(data);
       data.success ? toast.success(data.message) : toast.error(data.message);
     } catch (err) {
@@ -677,16 +678,34 @@ export default function Settings() {
               )}
             </div>
             <p className="mt-1 text-xs text-ink-400">
-              Use your Logokit publishable token (<code>pk_…</code>). It is used in image URLs, so it
-              is shared with the browser.
+              Use your Logokit <strong>Logo API</strong> publishable token (<code>pk_…</code>) from{" "}
+              <a
+                href="https://logokit.com/account/api-tokens"
+                target="_blank"
+                rel="noreferrer"
+                className="text-brand-600 hover:underline"
+              >
+                API Tokens → Logo API
+              </a>
+              . Not the Brand API secret token (<code>sk_…</code>).
             </p>
           </Field>
           <Field label="Image base URL">
             <input className="input" value={logokitUrl} onChange={(e) => setLogokitUrl(e.target.value)} placeholder="https://img.logokit.com" />
           </Field>
           <div className="rounded-lg border border-ink-100 bg-ink-50/60 p-3 text-xs text-ink-500">
-            Logos are fetched from <code>{(logokitUrl || "https://img.logokit.com")}/&#123;domain&#125;</code> and shown on
-            the Companies list and detail pages. Companies without a domain fall back to a default icon.
+            Logos load from{" "}
+            <code>{(logokitUrl || "https://img.logokit.com")}/&#123;domain&#125;?token=pk_…</code>{" "}
+            per the{" "}
+            <a
+              href="https://docs.logokit.com/authentication"
+              target="_blank"
+              rel="noreferrer"
+              className="text-brand-600 hover:underline"
+            >
+              LogoKit authentication docs
+            </a>
+            . Save your token before testing. You can also test an unsaved token directly.
           </div>
           <TestResult result={logokitTest} />
         </div>

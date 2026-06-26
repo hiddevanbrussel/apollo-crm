@@ -82,6 +82,17 @@ class LogokitTestResult(BaseModel):
     status_code: int | None = None
 
 
+class LogokitTestInput(BaseModel):
+    token: str | None = None
+
+
+class LogokitClientConfig(BaseModel):
+    enabled: bool
+    configured: bool = False
+    token: str | None = None
+    base_url: str = "https://img.logokit.com"
+
+
 class IntegrationServiceStatus(BaseModel):
     enabled: bool
     configured: bool
