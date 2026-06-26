@@ -337,7 +337,9 @@ export default function Companies() {
                   </th>
                   <th className="table-th">Company</th>
                   <th className="table-th">Industry</th>
+                  <th className="table-th">Tier</th>
                   <th className="table-th">Location</th>
+                  <th className="table-th">Partner</th>
                   <th className="table-th">Contacts</th>
                   <th className="table-th">Status</th>
                   <th className="table-th">Source</th>
@@ -370,7 +372,11 @@ export default function Companies() {
                       </div>
                     </td>
                     <td className="table-td">{c.industry || "—"}</td>
+                    <td className="table-td">{c.tier || "—"}</td>
                     <td className="table-td">{[c.city, c.country].filter(Boolean).join(", ") || "—"}</td>
+                    <td className="table-td max-w-[140px] truncate" title={c.partner_status || ""}>
+                      {c.partner_status || "—"}
+                    </td>
                     <td className="table-td">{c.contact_count ?? 0}</td>
                     <td className="table-td"><StatusBadge status={c.enrichment_status} /></td>
                     <td className="table-td"><SourceBadge source={c.source} /></td>

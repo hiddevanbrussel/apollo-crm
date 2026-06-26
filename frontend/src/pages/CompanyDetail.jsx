@@ -18,6 +18,10 @@ const EDIT_FIELDS = [
   "city",
   "phone",
   "description",
+  "tier",
+  "revenue_2025",
+  "sector_confidence",
+  "partner_status",
 ];
 
 function Detail({ label, value, href }) {
@@ -163,7 +167,7 @@ export default function CompanyDetail() {
       const payload = {};
       EDIT_FIELDS.forEach((f) => {
         let value = editForm[f];
-        if (f === "employee_count" || f === "revenue") {
+        if (f === "employee_count" || f === "revenue" || f === "revenue_2025") {
           value = value === "" || value === null ? null : Number(value);
         } else {
           value = value === "" ? null : value;
@@ -263,6 +267,13 @@ export default function CompanyDetail() {
               <Detail label="Revenue" value={company.revenue ? `$${company.revenue.toLocaleString()}` : null} />
               <Detail label="Country" value={company.country} />
               <Detail label="City" value={company.city} />
+              <Detail label="Tier" value={company.tier} />
+              <Detail
+                label="Revenue 2025"
+                value={company.revenue_2025 != null ? company.revenue_2025.toLocaleString() : null}
+              />
+              <Detail label="Sector confidence" value={company.sector_confidence} />
+              <Detail label="Partner status" value={company.partner_status} />
               <Detail label="Phone" value={company.phone} />
               <div className="sm:col-span-2 lg:col-span-3">
                 <Detail label="Description" value={company.description} />

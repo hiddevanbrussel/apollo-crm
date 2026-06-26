@@ -28,10 +28,18 @@ from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
 from app.services.company_domains import add_domain, list_domains
+from app.services.company_import_fields import (
+    normalize_partner_status,
+    normalize_sector_confidence,
+    normalize_tier,
+    parse_revenue_2025,
+)
+from app.services.country_normalize import normalize_country
 from app.services.groq_service import GroqError
 from app.services.import_service import (
     ImportParseError,
     canonical_field,
+    extract_company_row,
     normalize_domain,
     parse_spreadsheet,
 )
@@ -203,27 +211,54 @@ def create_company(payload: CompanyCreate, db: Session = Depends(get_db), _: Use
                 detail=f"A company with domain '{payload.domain}' already exists.",
             )
     company = Company(**payload.model_dump())
+    if company.country:
+        company.country = normalize_country(company.country)
     db.add(company)
     db.commit()
     db.refresh(company)
     return _with_contact_count(db, company)
 
 
-def _extract_row(row: dict[str, str]) -> tuple[str | None, str | None, str | None, dict]:
-    """Split a raw spreadsheet row into (name, country, domain, extra_data)."""
-    name = country = domain = None
-    extra: dict[str, str] = {}
-    for header, value in row.items():
-        field = canonical_field(header)
-        if field == "customer_name":
-            name = (value or "").strip() or name
-        elif field == "country":
-            country = (value or "").strip() or country
-        elif field == "domain":
-            domain = normalize_domain(value) or domain
-        elif value not in (None, ""):
-            extra[header] = value
-    return (name, country, domain, extra)
+def _apply_import_fields(company: Company, fields: dict[str, str | None]) -> bool:
+    """Apply normalized import columns onto a company. Returns True if anything changed."""
+    changed = False
+
+    country = normalize_country(fields.get("country"))
+    if country and company.country != country:
+        company.country = country
+        changed = True
+
+    tier = normalize_tier(fields.get("tier"))
+    if tier and company.tier != tier:
+        company.tier = tier
+        changed = True
+
+    revenue_2025 = parse_revenue_2025(fields.get("revenue_2025"))
+    if revenue_2025 is not None and company.revenue_2025 != revenue_2025:
+        company.revenue_2025 = revenue_2025
+        changed = True
+
+    sector_confidence = normalize_sector_confidence(fields.get("sector_confidence"))
+    if sector_confidence and company.sector_confidence != sector_confidence:
+        company.sector_confidence = sector_confidence
+        changed = True
+
+    partner_status = normalize_partner_status(fields.get("partner_status"))
+    if partner_status and company.partner_status != partner_status:
+        company.partner_status = partner_status
+        changed = True
+
+    return changed
+
+
+def _parse_company_import_row(row: dict[str, str]) -> tuple[
+    str | None, str | None, str | None, dict[str, str | None], dict[str, str]
+]:
+    fields, extra = extract_company_row(row)
+    name = (fields.get("customer_name") or "").strip() or None
+    country = normalize_country(fields.get("country"))
+    domain = normalize_domain(fields.get("domain"))
+    return name, country, domain, fields, extra
 
 
 def _enrich_company_inline(db: Session, client, company: Company) -> bool:
@@ -327,7 +362,7 @@ async def import_companies(
             field = canonical_field(header)
             (recognized if field else extra_cols).add(header)
 
-        name, country, domain, extra = _extract_row(row)
+        name, country, domain, import_fields, extra = _parse_company_import_row(row)
         if not name:
             errors.append(f"Rij {index}: 'customer_name' is leeg, overgeslagen.")
             continue
@@ -370,8 +405,7 @@ async def import_companies(
                     seen_domains_in_file.add(domain)
                 elif clash_msg:
                     extra.setdefault("import_domain", domain)
-            if country and not existing.country:
-                existing.country = country
+            if _apply_import_fields(existing, import_fields):
                 changed = True
             if extra:
                 merged = {**(existing.extra_data or {}), **extra}
@@ -389,6 +423,10 @@ async def import_companies(
                 country=country,
                 domain=domain,
                 domains=[],
+                tier=normalize_tier(import_fields.get("tier")),
+                revenue_2025=parse_revenue_2025(import_fields.get("revenue_2025")),
+                sector_confidence=normalize_sector_confidence(import_fields.get("sector_confidence")),
+                partner_status=normalize_partner_status(import_fields.get("partner_status")),
                 extra_data=extra,
                 source="import",
                 enrichment_status="none",
@@ -472,6 +510,8 @@ def update_company(
         raise HTTPException(status_code=404, detail="Company not found.")
 
     data = payload.model_dump(exclude_unset=True)
+    if data.get("country"):
+        data["country"] = normalize_country(data["country"])
     if "domain" in data and data["domain"] and data["domain"].lower() != (company.domain or "").lower():
         clash = db.execute(
             select(Company).where(func.lower(Company.domain) == data["domain"].lower())

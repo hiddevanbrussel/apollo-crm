@@ -29,6 +29,10 @@ class Company(Base):
     extra_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
     # Additional domains beyond the primary ``domain`` column (stored lowercase).
     domains: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
+    tier: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    revenue_2025: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sector_confidence: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    partner_status: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

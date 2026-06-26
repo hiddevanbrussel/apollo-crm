@@ -97,8 +97,13 @@ export function CompanyImportPanel({ apolloReady = false }) {
       <div className="mb-4 rounded-lg border border-ink-100 bg-ink-50/60 p-3 text-sm text-ink-600">
         Required: <code className="rounded bg-white px-1 text-xs">customer_name</code>. Also recognized:{" "}
         <code className="rounded bg-white px-1 text-xs">Country</code>,{" "}
-        <code className="rounded bg-white px-1 text-xs">domain</code>. Columns like Tier, Sector, Revenue 2025,
-        Tier Reason, Sector_confidence and Partner_status are stored as extra data.
+        <code className="rounded bg-white px-1 text-xs">domain</code>,{" "}
+        <code className="rounded bg-white px-1 text-xs">Tier</code>,{" "}
+        <code className="rounded bg-white px-1 text-xs">Revenue 2025</code>,{" "}
+        <code className="rounded bg-white px-1 text-xs">Sector_confidence</code>,{" "}
+        <code className="rounded bg-white px-1 text-xs">Partner_status</code>.
+        Countries are normalized on import (e.g. Brasil → Brazil, The Netherlands → Netherlands).
+        Other columns are stored as extra data.
       </div>
 
       <div

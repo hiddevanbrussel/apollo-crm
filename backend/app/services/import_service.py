@@ -28,6 +28,13 @@ HEADER_ALIASES: dict[str, str] = {
     "domain": "domain",
     "website": "domain",
     "website_url": "domain",
+    "tier": "tier",
+    "revenue 2025": "revenue_2025",
+    "revenue_2025": "revenue_2025",
+    "sector_confidence": "sector_confidence",
+    "sector confidence": "sector_confidence",
+    "partner_status": "partner_status",
+    "partner status": "partner_status",
 }
 
 # Contact import: header aliases -> canonical contact field.
@@ -232,6 +239,49 @@ def parse_contact_spreadsheet(filename: str, content: bytes) -> list[dict[str, s
     )
 
 
+def extract_contact_row(row: dict[str, str]) -> tuple[dict[str, str | None], dict[str, str]]:
+    """Split a raw spreadsheet row into contact fields and leftover extra columns."""
+    fields: dict[str, str | None] = {k: None for k in CONTACT_FIELDS}
+    extra: dict[str, str] = {}
+    for header, value in row.items():
+        field = contact_canonical_field(header)
+        raw = (value or "").strip()
+        if field in CONTACT_FIELDS:
+            if raw:
+                fields[field] = raw
+        elif raw:
+            extra[header] = raw
+    return fields, extra
+
+
+COMPANY_IMPORT_FIELDS = frozenset(
+    {
+        "customer_name",
+        "country",
+        "domain",
+        "tier",
+        "revenue_2025",
+        "sector_confidence",
+        "partner_status",
+    }
+)
+
+
+def extract_company_row(row: dict[str, str]) -> tuple[dict[str, str | None], dict[str, str]]:
+    """Split a raw spreadsheet row into known company fields and leftover extra columns."""
+    fields: dict[str, str | None] = {k: None for k in COMPANY_IMPORT_FIELDS}
+    extra: dict[str, str] = {}
+    for header, value in row.items():
+        field = canonical_field(header)
+        raw = (value or "").strip()
+        if field in COMPANY_IMPORT_FIELDS:
+            if raw:
+                fields[field] = raw
+        elif raw:
+            extra[header] = raw
+    return fields, extra
+
+
 CONTACT_FIELDS = frozenset(
     {
         "customer_name",
@@ -248,18 +298,3 @@ CONTACT_FIELDS = frozenset(
         "department",
     }
 )
-
-
-def extract_contact_row(row: dict[str, str]) -> tuple[dict[str, str | None], dict[str, str]]:
-    """Split a raw spreadsheet row into contact fields and leftover extra columns."""
-    fields: dict[str, str | None] = {k: None for k in CONTACT_FIELDS}
-    extra: dict[str, str] = {}
-    for header, value in row.items():
-        field = contact_canonical_field(header)
-        raw = (value or "").strip()
-        if field in CONTACT_FIELDS:
-            if raw:
-                fields[field] = raw
-        elif raw:
-            extra[header] = raw
-    return fields, extra

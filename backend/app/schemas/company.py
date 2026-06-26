@@ -15,6 +15,10 @@ class CompanyBase(BaseModel):
     city: str | None = None
     phone: str | None = None
     description: str | None = None
+    tier: str | None = None
+    revenue_2025: int | None = None
+    sector_confidence: str | None = None
+    partner_status: str | None = None
 
 
 class CompanyCreate(CompanyBase):
@@ -34,6 +38,10 @@ class CompanyUpdate(BaseModel):
     city: str | None = None
     phone: str | None = None
     description: str | None = None
+    tier: str | None = None
+    revenue_2025: int | None = None
+    sector_confidence: str | None = None
+    partner_status: str | None = None
 
 
 class CompanyOut(CompanyBase):
