@@ -120,6 +120,14 @@ class BulkEnrichResult(BaseModel):
     items: list[BulkEnrichItem]
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int
+
+
 class DomainJobOut(BaseModel):
     id: str
     status: str

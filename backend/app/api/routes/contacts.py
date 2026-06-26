@@ -1,11 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
 from app.models import Company, Contact, EnrichmentLog, User
-from app.schemas.contact import ContactCreate, ContactList, ContactOut, ContactUpdate
+from app.schemas.contact import (
+    BulkDeleteRequest,
+    BulkDeleteResult,
+    ContactCreate,
+    ContactList,
+    ContactOut,
+    ContactUpdate,
+)
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
@@ -98,6 +105,27 @@ def create_contact(payload: ContactCreate, db: Session = Depends(get_db), _: Use
     db.commit()
     db.refresh(contact)
     return ContactOut.model_validate(contact)
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResult)
+def bulk_delete_contacts(
+    payload: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    if not payload.ids:
+        return BulkDeleteResult(deleted=0)
+    ids = list(dict.fromkeys(payload.ids))
+    result = db.execute(delete(Contact).where(Contact.id.in_(ids)))
+    db.commit()
+    return BulkDeleteResult(deleted=result.rowcount or 0)
+
+
+@router.delete("/all", response_model=BulkDeleteResult)
+def delete_all_contacts(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    result = db.execute(delete(Contact))
+    db.commit()
+    return BulkDeleteResult(deleted=result.rowcount or 0)
 
 
 @router.get("/{contact_id}", response_model=ContactOut)

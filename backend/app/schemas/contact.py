@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class CompanyBrief(BaseModel):
@@ -67,6 +67,14 @@ class ContactList(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: int
 
 
 class FindPeopleResult(BaseModel):

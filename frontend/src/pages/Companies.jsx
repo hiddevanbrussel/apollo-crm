@@ -64,6 +64,8 @@ export default function Companies() {
   const [selected, setSelected] = useState(new Set());
   const [apolloReady, setApolloReady] = useState(false);
   const [bulkEnriching, setBulkEnriching] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const fileInputRef = useRef(null);
   const pageSize = 20;
 
@@ -166,6 +168,48 @@ export default function Companies() {
     }
   };
 
+  const bulkDelete = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} selected company(ies) and their linked contacts?`)) return;
+    setBulkDeleting(true);
+    try {
+      const { data: res } = await api.post("/companies/bulk-delete", { ids });
+      toast.success(`${res.deleted} company(ies) deleted.`);
+      clearSelection();
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const deleteAll = async () => {
+    if (
+      !confirm(
+        "Delete ALL companies in the database (and all linked contacts)? This ignores current filters and cannot be undone."
+      )
+    ) {
+      return;
+    }
+      return;
+    }
+    setDeletingAll(true);
+    try {
+      const { data: res } = await api.delete("/companies/all");
+      toast.success(`${res.deleted} company(ies) deleted.`);
+      clearSelection();
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   const createCompany = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -237,6 +281,14 @@ export default function Companies() {
           <p className="text-sm text-ink-500">Manage all companies in your CRM.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
+            onClick={deleteAll}
+            disabled={deletingAll || loading}
+          >
+            {deletingAll ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
+            Delete all
+          </button>
           <button className="btn-secondary" onClick={openImport}>
             <Icon.Upload width={18} height={18} /> Import
           </button>
@@ -274,13 +326,22 @@ export default function Companies() {
           </button>
         </div>
 
-        {selected.size > 0 && isAdmin && (
+        {selected.size > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-brand-50/60 px-4 py-3">
             <span className="text-sm font-medium text-ink-700">{selected.size} selected</span>
             <div className="flex items-center gap-2">
               <button className="btn-ghost text-sm text-ink-500" onClick={clearSelection}>
                 Clear selection
               </button>
+              <button
+                className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
+                onClick={bulkDelete}
+                disabled={bulkDeleting}
+              >
+                {bulkDeleting ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
+                Delete selected
+              </button>
+              {isAdmin && (
               <button
                 className="btn-primary"
                 onClick={bulkEnrich}
@@ -294,6 +355,7 @@ export default function Companies() {
                 )}
                 Enrich via Apollo
               </button>
+              )}
             </div>
           </div>
         )}

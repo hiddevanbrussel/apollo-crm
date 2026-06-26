@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import bindparam, func, or_, select, text
+from sqlalchemy import bindparam, delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,8 @@ from app.models import Company, Contact, EnrichmentLog, User
 from app.schemas.company import (
     BulkDomainItem,
     BulkDomainResult,
+    BulkDeleteRequest,
+    BulkDeleteResult,
     BulkEnrichItem,
     BulkEnrichRequest,
     BulkEnrichResult,
@@ -430,6 +432,29 @@ async def import_companies(
         recognized_columns=sorted(recognized),
         extra_columns=sorted(extra_cols),
     )
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResult)
+def bulk_delete_companies(
+    payload: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    if not payload.ids:
+        return BulkDeleteResult(deleted=0)
+    ids = list(dict.fromkeys(payload.ids))
+    db.execute(delete(Contact).where(Contact.company_id.in_(ids)))
+    result = db.execute(delete(Company).where(Company.id.in_(ids)))
+    db.commit()
+    return BulkDeleteResult(deleted=result.rowcount or 0)
+
+
+@router.delete("/all", response_model=BulkDeleteResult)
+def delete_all_companies(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    db.execute(delete(Contact))
+    result = db.execute(delete(Company))
+    db.commit()
+    return BulkDeleteResult(deleted=result.rowcount or 0)
 
 
 @router.get("/{company_id}", response_model=CompanyOut)

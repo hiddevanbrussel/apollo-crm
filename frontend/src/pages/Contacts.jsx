@@ -18,6 +18,7 @@ export default function Contacts() {
   const [form, setForm] = useState(EMPTY);
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const pageSize = 20;
 
   const load = useCallback(async () => {
@@ -79,6 +80,21 @@ export default function Contacts() {
     }
   };
 
+  const deleteAll = async () => {
+    if (!confirm("Delete ALL contacts in the database? This ignores current filters and cannot be undone.")) return;
+    setDeletingAll(true);
+    try {
+      const { data: res } = await api.delete("/contacts/all");
+      toast.success(`${res.deleted} contact(s) deleted.`);
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -86,9 +102,19 @@ export default function Contacts() {
           <h1 className="text-xl font-semibold text-ink-900">Contacts</h1>
           <p className="text-sm text-ink-500">Manage all contacts in your CRM.</p>
         </div>
-        <button className="btn-primary" onClick={openCreate}>
-          <Icon.Plus width={18} height={18} /> New contact
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
+            onClick={deleteAll}
+            disabled={deletingAll || loading}
+          >
+            {deletingAll ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
+            Delete all
+          </button>
+          <button className="btn-primary" onClick={openCreate}>
+            <Icon.Plus width={18} height={18} /> New contact
+          </button>
+        </div>
       </div>
 
       <div className="card">
