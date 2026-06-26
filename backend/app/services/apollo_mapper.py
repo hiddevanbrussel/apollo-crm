@@ -49,6 +49,25 @@ def _split_person_name(full: str) -> tuple[str | None, str | None]:
     return parts[0], parts[1] if len(parts) > 1 else None
 
 
+def build_email_only_match_payload(
+    contact: Any,
+    *,
+    reveal_personal_emails: bool = True,
+    run_waterfall_email: bool = True,
+) -> dict[str, Any]:
+    """Minimal people/match payload: email only (strongest identifier when present)."""
+    email = str(contact.email).strip() if contact.email else None
+    payload: dict[str, Any] = {
+        "email": email,
+        "reveal_personal_emails": reveal_personal_emails,
+        "run_waterfall_email": run_waterfall_email,
+    }
+    apollo_id = (contact.apollo_id or "").strip() if contact.apollo_id else None
+    if apollo_id:
+        payload["id"] = apollo_id
+    return {k: v for k, v in payload.items() if v not in (None, "")}
+
+
 def build_person_match_payload(
     contact: Any,
     company: Any | None = None,
@@ -93,6 +112,43 @@ def build_person_match_payload(
         payload["id"] = apollo_id
 
     return {k: v for k, v in payload.items() if v not in (None, "")}
+
+
+def person_match_is_empty(person: dict[str, Any] | None) -> bool:
+    """Return True when Apollo returned no usable person from people/match."""
+    if not person:
+        return True
+    if person.get("id"):
+        return False
+    return not any(
+        person.get(k)
+        for k in ("email", "first_name", "last_name", "name", "linkedin_url", "title")
+    )
+
+
+def build_person_match_attempts(
+    contact: Any,
+    company: Any | None = None,
+    *,
+    reveal_personal_emails: bool = True,
+    run_waterfall_email: bool = True,
+) -> list[dict[str, Any]]:
+    """Build ordered people/match payloads: email-only first, then full criteria."""
+    kwargs = {
+        "reveal_personal_emails": reveal_personal_emails,
+        "run_waterfall_email": run_waterfall_email,
+    }
+    attempts: list[dict[str, Any]] = []
+
+    email_only = build_email_only_match_payload(contact, **kwargs)
+    if email_only.get("email"):
+        attempts.append(email_only)
+
+    full = build_person_match_payload(contact, company, **kwargs)
+    if has_person_match_criteria(full) and full not in attempts:
+        attempts.append(full)
+
+    return attempts
 
 
 def has_person_match_criteria(payload: dict[str, Any]) -> bool:

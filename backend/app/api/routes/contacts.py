@@ -20,7 +20,11 @@ from app.schemas.contact import (
     ContactOut,
     ContactUpdate,
 )
-from app.services.apollo_mapper import build_person_match_payload, has_person_match_criteria, map_person
+from app.services.apollo_mapper import (
+    build_person_match_attempts,
+    map_person,
+    person_match_is_empty,
+)
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
 from app.services.import_service import (
@@ -623,8 +627,8 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
         raise HTTPException(status_code=404, detail="Contact not found.")
 
     company = db.get(Company, contact.company_id) if contact.company_id else None
-    request_payload = build_person_match_payload(contact, company)
-    if not has_person_match_criteria(request_payload):
+    match_attempts = build_person_match_attempts(contact, company)
+    if not match_attempts:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -633,7 +637,9 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
             ),
         )
 
-    if request_payload.get("run_waterfall_email"):
+    needs_webhook = any(p.get("run_waterfall_email") for p in match_attempts)
+    webhook_url = None
+    if needs_webhook:
         webhook_url = build_contact_webhook_url(contact.id)
         if not webhook_url:
             raise HTTPException(
@@ -643,36 +649,54 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
                     "(e.g. https://ai.xential.nl) to use waterfall email enrichment."
                 ),
             )
-        request_payload["webhook_url"] = webhook_url
+        for payload in match_attempts:
+            payload["webhook_url"] = webhook_url
 
-    log_payload = redact_match_log_payload(request_payload)
     _ensure_apollo_enabled(db)
     client = build_client(db)
-    try:
-        response = client.enrich_person(request_payload)
-    except ApolloError as exc:
-        contact.enrichment_status = "failed"
-        db.add(
-            EnrichmentLog(
-                entity_type="contact",
-                entity_id=contact.id,
-                endpoint="/api/v1/people/match",
-                request_payload=log_payload,
-                response_status=exc.status_code,
-            )
-        )
-        db.commit()
-        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
 
-    person = response.get("person") or {}
-    if not person:
+    response: dict = {}
+    request_payload: dict = {}
+    match_strategy = "full"
+    last_exc: ApolloError | None = None
+    for idx, payload in enumerate(match_attempts):
+        try:
+            attempt_response = client.enrich_person(payload)
+        except ApolloError as exc:
+            last_exc = exc
+            continue
+        person = attempt_response.get("person") or {}
+        if person_match_is_empty(person):
+            continue
+        response = attempt_response
+        request_payload = payload
+        match_strategy = "email_only" if idx == 0 and payload.get("email") else "full"
+        break
+
+    log_payload = {**redact_match_log_payload(request_payload), "match_strategy": match_strategy}
+
+    if not response:
+        if last_exc:
+            contact.enrichment_status = "failed"
+            db.add(
+                EnrichmentLog(
+                    entity_type="contact",
+                    entity_id=contact.id,
+                    endpoint="/api/v1/people/match",
+                    request_payload=redact_match_log_payload(match_attempts[-1]),
+                    response_status=last_exc.status_code,
+                )
+            )
+            db.commit()
+            raise HTTPException(status_code=last_exc.status_code or 502, detail=last_exc.message)
+
         contact.enrichment_status = "failed"
         db.add(
             EnrichmentLog(
                 entity_type="contact",
                 entity_id=contact.id,
                 endpoint="/api/v1/people/match",
-                request_payload=log_payload,
+                request_payload=redact_match_log_payload(match_attempts[-1]),
                 response_status=404,
             )
         )
@@ -684,6 +708,8 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
                 "for better matching and try again."
             ),
         )
+
+    person = response.get("person") or {}
 
     mapped = map_person(person)
     org = mapped.pop("_organization", None)
