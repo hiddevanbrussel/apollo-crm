@@ -180,9 +180,15 @@ export default function ContactDetail() {
 
           {contact.apollo_data && Object.keys(contact.apollo_data).length > 0 && (
             <details className="mt-5 border-t border-ink-100 pt-4">
-              <summary className="cursor-pointer text-sm font-semibold text-ink-700">Raw Apollo data</summary>
+              <summary className="cursor-pointer text-sm font-semibold text-ink-700">
+                {contact.source === "import" ? "Import extra data" : "Raw Apollo data"}
+              </summary>
               <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
-{JSON.stringify(contact.apollo_data, null, 2)}
+{JSON.stringify(
+  contact.source === "import" ? contact.apollo_data.import_extra || contact.apollo_data : contact.apollo_data,
+  null,
+  2
+)}
               </pre>
             </details>
           )}

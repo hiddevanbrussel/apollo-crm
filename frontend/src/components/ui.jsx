@@ -85,13 +85,16 @@ export function StatusBadge({ status }) {
 
 const SOURCE_LABELS = { apollo: "APOLLO", seed: "DEMO", import: "IMPORT", manual: "MANUAL" };
 
+const SOURCE_STYLES = {
+  apollo: "border-accent-200 bg-accent-50 text-accent-600",
+  import: "border-green-200 bg-green-50 text-green-700",
+};
+
 export function SourceBadge({ source }) {
-  const isApollo = source === "apollo";
+  const style = SOURCE_STYLES[source] || "";
   return (
-    <span
-      className={`badge-mono ${isApollo ? "border-accent-200 bg-accent-50 text-accent-600" : ""}`}
-    >
-      {SOURCE_LABELS[source] || "MANUAL"}
+    <span className={`badge-mono ${style}`}>
+      {SOURCE_LABELS[source] || source?.toUpperCase() || "MANUAL"}
     </span>
   );
 }

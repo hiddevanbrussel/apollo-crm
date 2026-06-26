@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_user, get_current_user
@@ -9,13 +10,22 @@ from app.schemas.contact import (
     BulkDeleteRequest,
     BulkDeleteResult,
     ContactCreate,
+    ContactImportResult,
     ContactList,
     ContactOut,
     ContactUpdate,
 )
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
+from app.services.import_service import (
+    ImportParseError,
+    contact_canonical_field,
+    extract_contact_row,
+    parse_contact_spreadsheet,
+)
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
+
+MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -39,6 +49,7 @@ def list_contacts(
     _: User = Depends(get_current_user),
     search: str | None = Query(default=None, description="Search name/title/email"),
     company_id: int | None = None,
+    source: str | None = None,
     enrichment_status: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
@@ -57,6 +68,8 @@ def list_contacts(
         )
     if company_id:
         stmt = stmt.where(Contact.company_id == company_id)
+    if source:
+        stmt = stmt.where(Contact.source == source)
     if enrichment_status:
         stmt = stmt.where(Contact.enrichment_status == enrichment_status)
 
@@ -105,6 +118,182 @@ def create_contact(payload: ContactCreate, db: Session = Depends(get_db), _: Use
     db.commit()
     db.refresh(contact)
     return ContactOut.model_validate(contact)
+
+
+def _build_full_name(fields: dict[str, str | None]) -> str | None:
+    full = (fields.get("full_name") or "").strip() or None
+    if full:
+        return full
+    parts = [fields.get("first_name"), fields.get("last_name")]
+    joined = " ".join(p.strip() for p in parts if p and str(p).strip())
+    return joined or None
+
+
+def _find_company_by_name(db: Session, name: str) -> Company | None:
+    return db.execute(
+        select(Company).where(func.lower(Company.name) == name.strip().lower())
+    ).scalar_one_or_none()
+
+
+@router.post("/import", response_model=ContactImportResult)
+async def import_contacts(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Import contacts from Excel (.xlsx) or CSV and link them to existing companies.
+
+    Required: ``customer_name`` (must match a company imported earlier) plus at least
+    one of ``first_name``, ``last_name``, ``full_name`` or ``email``.
+    Imported contacts are stored with ``source=import`` so they are distinguishable
+    from Apollo-discovered people.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB).")
+
+    try:
+        rows = parse_contact_spreadsheet(file.filename or "", content)
+    except ImportParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    created = 0
+    updated = 0
+    skipped = 0
+    skipped_apollo = 0
+    errors: list[str] = []
+    recognized: set[str] = set()
+    extra_cols: set[str] = set()
+    seen_in_file: set[str] = set()
+
+    for index, row in enumerate(rows, start=2):
+        for header in row:
+            field = contact_canonical_field(header)
+            (recognized if field else extra_cols).add(header)
+
+        fields, extra = extract_contact_row(row)
+        company_name = (fields.get("customer_name") or "").strip()
+        email = (fields.get("email") or "").strip() or None
+        full_name = _build_full_name(fields)
+
+        if not company_name:
+            errors.append(f"Row {index}: customer_name is empty, skipped.")
+            continue
+        if not full_name and not email:
+            errors.append(f"Row {index}: no name or email, skipped.")
+            continue
+
+        company = _find_company_by_name(db, company_name)
+        if not company:
+            errors.append(
+                f"Row {index}: company '{company_name}' not found. Import companies first."
+            )
+            continue
+
+        dedup_key = f"{company.id}|{(email or '').lower()}|{(full_name or '').lower()}"
+        if dedup_key in seen_in_file:
+            skipped += 1
+            continue
+        seen_in_file.add(dedup_key)
+
+        existing = None
+        if email:
+            existing = db.execute(
+                select(Contact).where(func.lower(Contact.email) == email.lower())
+            ).scalar_one_or_none()
+        if not existing and full_name:
+            existing = db.execute(
+                select(Contact).where(
+                    Contact.company_id == company.id,
+                    func.lower(Contact.full_name) == full_name.lower(),
+                )
+            ).scalar_one_or_none()
+
+        contact_fields = {
+            k: v for k, v in fields.items() if k != "customer_name" and v not in (None, "")
+        }
+        if full_name:
+            contact_fields["full_name"] = full_name
+
+        if existing:
+            if existing.source == "apollo":
+                skipped_apollo += 1
+                continue
+            changed = False
+            for key, value in contact_fields.items():
+                if key in {"full_name", "first_name", "last_name", "email"} and value:
+                    if getattr(existing, key) != value:
+                        setattr(existing, key, value)
+                        changed = True
+                elif value and not getattr(existing, key):
+                    setattr(existing, key, value)
+                    changed = True
+            if existing.company_id != company.id:
+                existing.company_id = company.id
+                changed = True
+            if extra:
+                merged = dict(existing.apollo_data or {})
+                merged_extra = dict(merged.get("import_extra") or {})
+                merged_extra.update(extra)
+                if merged_extra != merged.get("import_extra"):
+                    merged["import_extra"] = merged_extra
+                    existing.apollo_data = merged
+                    changed = True
+            if existing.source != "import":
+                existing.source = "import"
+                changed = True
+            if changed:
+                updated += 1
+            else:
+                skipped += 1
+            continue
+
+        apollo_data: dict = {}
+        if extra:
+            apollo_data["import_extra"] = extra
+
+        contact = Contact(
+            company_id=company.id,
+            first_name=contact_fields.get("first_name"),
+            last_name=contact_fields.get("last_name"),
+            full_name=contact_fields.get("full_name"),
+            title=contact_fields.get("title"),
+            email=email,
+            phone=contact_fields.get("phone"),
+            linkedin_url=contact_fields.get("linkedin_url"),
+            city=contact_fields.get("city"),
+            country=contact_fields.get("country"),
+            seniority=contact_fields.get("seniority"),
+            department=contact_fields.get("department"),
+            source="import",
+            enrichment_status="none",
+            apollo_data=apollo_data,
+        )
+        db.add(contact)
+        created += 1
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        detail = str(getattr(exc, "orig", exc))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Import failed: duplicate or invalid value in the data ({detail}).",
+        ) from exc
+
+    return ContactImportResult(
+        total_rows=len(rows),
+        created=created,
+        updated=updated,
+        skipped_duplicates=skipped,
+        skipped_apollo=skipped_apollo,
+        errors=errors,
+        recognized_columns=sorted(recognized),
+        extra_columns=sorted(extra_cols),
+    )
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResult)

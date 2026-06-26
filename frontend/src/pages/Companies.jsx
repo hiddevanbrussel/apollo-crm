@@ -547,11 +547,12 @@ export default function Companies() {
       >
         <div className="space-y-4">
           <div className="rounded-lg border border-ink-100 bg-ink-50/60 p-4 text-sm text-ink-600">
-            Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file. Recognized columns:{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">customer_name</code>,{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">country</code> and{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">domain</code>. All other columns
-            are stored as extra data. Existing companies (same name or domain) are
+            Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file. Required column:{" "}
+            <code className="rounded bg-white px-1.5 py-0.5 text-xs">customer_name</code>.
+            Also recognized: <code className="rounded bg-white px-1.5 py-0.5 text-xs">Country</code>,{" "}
+            <code className="rounded bg-white px-1.5 py-0.5 text-xs">domain</code>.
+            Columns such as Tier, Sector, Revenue 2025, Tier Reason, Sector_confidence and
+            Partner_status are stored as extra data. Existing companies (same name or domain) are
             <strong> updated</strong> instead of duplicated.
           </div>
 

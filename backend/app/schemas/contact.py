@@ -77,6 +77,17 @@ class BulkDeleteResult(BaseModel):
     deleted: int
 
 
+class ContactImportResult(BaseModel):
+    total_rows: int
+    created: int
+    updated: int
+    skipped_duplicates: int
+    skipped_apollo: int
+    errors: list[str]
+    recognized_columns: list[str]
+    extra_columns: list[str]
+
+
 class FindPeopleResult(BaseModel):
     created: int
     updated: int

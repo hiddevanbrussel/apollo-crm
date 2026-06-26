@@ -1,20 +1,20 @@
 """Parse uploaded spreadsheets (xlsx / csv) into normalized row dicts.
 
 Rows are returned keyed by their *original* (whitespace-trimmed) header so the
-caller can preserve every column. Use :func:`canonical_field` to map a header
-onto one of the known CRM fields (customer_name, country, domain).
+caller can preserve every column. Use :func:`canonical_field` or
+:func:`contact_canonical_field` to map headers onto known CRM fields.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 from openpyxl import load_workbook
 
-# Header aliases -> canonical CRM field. Matching is case-insensitive and
-# ignores surrounding whitespace.
+# Company import: header aliases -> canonical CRM field.
 HEADER_ALIASES: dict[str, str] = {
     "customer_name": "customer_name",
     "customer name": "customer_name",
@@ -30,6 +30,47 @@ HEADER_ALIASES: dict[str, str] = {
     "website_url": "domain",
 }
 
+# Contact import: header aliases -> canonical contact field.
+# ``customer_name`` links the person to an existing company (by name).
+CONTACT_HEADER_ALIASES: dict[str, str] = {
+    "customer_name": "customer_name",
+    "customer name": "customer_name",
+    "company": "customer_name",
+    "company_name": "customer_name",
+    "bedrijf": "customer_name",
+    "bedrijfsnaam": "customer_name",
+    "first_name": "first_name",
+    "firstname": "first_name",
+    "voornaam": "first_name",
+    "last_name": "last_name",
+    "lastname": "last_name",
+    "achternaam": "last_name",
+    "full_name": "full_name",
+    "fullname": "full_name",
+    "name": "full_name",
+    "naam": "full_name",
+    "contact_name": "full_name",
+    "email": "email",
+    "e-mail": "email",
+    "e_mail": "email",
+    "phone": "phone",
+    "telefoon": "phone",
+    "mobile": "phone",
+    "title": "title",
+    "job_title": "title",
+    "functie": "title",
+    "linkedin_url": "linkedin_url",
+    "linkedin": "linkedin_url",
+    "linkedin url": "linkedin_url",
+    "city": "city",
+    "stad": "city",
+    "country": "country",
+    "land": "country",
+    "seniority": "seniority",
+    "department": "department",
+    "afdeling": "department",
+}
+
 # Spreadsheet placeholders that mean "no domain" (Dutch/English).
 DOMAIN_PLACEHOLDERS = frozenset(
     {"", "niet", "geen", "n/a", "na", "none", "unknown", "-", "—", "null", "?"}
@@ -41,10 +82,17 @@ class ImportParseError(Exception):
 
 
 def canonical_field(header: object) -> str | None:
-    """Return the canonical CRM field for a header, or None if it is custom."""
+    """Return the canonical company field for a header, or None if it is custom."""
     if header is None:
         return None
     return HEADER_ALIASES.get(str(header).strip().lower())
+
+
+def contact_canonical_field(header: object) -> str | None:
+    """Return the canonical contact field for a header, or None if it is custom."""
+    if header is None:
+        return None
+    return CONTACT_HEADER_ALIASES.get(str(header).strip().lower())
 
 
 def normalize_domain(value: str | None) -> str | None:
@@ -71,7 +119,15 @@ def _has_name_column(headers) -> bool:
     return any(canonical_field(h) == "customer_name" for h in headers)
 
 
-def _parse_xlsx(content: bytes) -> list[dict[str, str]]:
+def _has_contact_columns(headers) -> bool:
+    has_company = any(contact_canonical_field(h) == "customer_name" for h in headers)
+    has_identity = any(
+        contact_canonical_field(h) in {"first_name", "last_name", "full_name", "email"} for h in headers
+    )
+    return has_company and has_identity
+
+
+def _parse_xlsx(content: bytes, *, validate_headers: Callable[[list], bool], missing_msg: str) -> list[dict[str, str]]:
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:  # noqa: BLE001
@@ -84,10 +140,8 @@ def _parse_xlsx(content: bytes) -> list[dict[str, str]]:
         return []
 
     headers = [str(h).strip() if h not in (None, "") else None for h in header_row]
-    if not _has_name_column(headers):
-        raise ImportParseError(
-            "Required column 'customer_name' not found. Expected at least: customer_name."
-        )
+    if not validate_headers(headers):
+        raise ImportParseError(missing_msg)
 
     rows: list[dict[str, str]] = []
     for raw in rows_iter:
@@ -102,7 +156,7 @@ def _parse_xlsx(content: bytes) -> list[dict[str, str]]:
     return rows
 
 
-def _parse_csv(content: bytes) -> list[dict[str, str]]:
+def _parse_csv(content: bytes, *, validate_headers: Callable[[list], bool], missing_msg: str) -> list[dict[str, str]]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -115,10 +169,8 @@ def _parse_csv(content: bytes) -> list[dict[str, str]]:
         return []
 
     headers = [h.strip() if h and h.strip() else None for h in rows_list[0]]
-    if not _has_name_column(headers):
-        raise ImportParseError(
-            "Required column 'customer_name' not found. Expected at least: customer_name."
-        )
+    if not validate_headers(headers):
+        raise ImportParseError(missing_msg)
 
     rows: list[dict[str, str]] = []
     for raw in rows_list[1:]:
@@ -133,14 +185,81 @@ def _parse_csv(content: bytes) -> list[dict[str, str]]:
     return rows
 
 
-def parse_spreadsheet(filename: str, content: bytes) -> list[dict[str, str]]:
-    """Return rows as {original_header: value} dicts from an xlsx or csv file."""
+_COMPANY_MISSING = (
+    "Required column 'customer_name' not found. Expected at least: customer_name."
+)
+_CONTACT_MISSING = (
+    "Required columns not found. Expected customer_name (company) plus at least one of: "
+    "first_name, last_name, full_name, email."
+)
+
+
+def _parse_spreadsheet(
+    filename: str,
+    content: bytes,
+    *,
+    validate_headers: Callable[[list], bool],
+    missing_msg: str,
+) -> list[dict[str, str]]:
     lower = (filename or "").lower()
     if lower.endswith(".csv"):
-        return _parse_csv(content)
+        return _parse_csv(content, validate_headers=validate_headers, missing_msg=missing_msg)
     if lower.endswith(".xlsx") or lower.endswith(".xlsm"):
-        return _parse_xlsx(content)
+        return _parse_xlsx(content, validate_headers=validate_headers, missing_msg=missing_msg)
     try:
-        return _parse_xlsx(content)
+        return _parse_xlsx(content, validate_headers=validate_headers, missing_msg=missing_msg)
     except ImportParseError:
-        return _parse_csv(content)
+        return _parse_csv(content, validate_headers=validate_headers, missing_msg=missing_msg)
+
+
+def parse_spreadsheet(filename: str, content: bytes) -> list[dict[str, str]]:
+    """Return company-import rows as {original_header: value} dicts."""
+    return _parse_spreadsheet(
+        filename,
+        content,
+        validate_headers=_has_name_column,
+        missing_msg=_COMPANY_MISSING,
+    )
+
+
+def parse_contact_spreadsheet(filename: str, content: bytes) -> list[dict[str, str]]:
+    """Return contact-import rows as {original_header: value} dicts."""
+    return _parse_spreadsheet(
+        filename,
+        content,
+        validate_headers=_has_contact_columns,
+        missing_msg=_CONTACT_MISSING,
+    )
+
+
+CONTACT_FIELDS = frozenset(
+    {
+        "customer_name",
+        "first_name",
+        "last_name",
+        "full_name",
+        "email",
+        "phone",
+        "title",
+        "linkedin_url",
+        "city",
+        "country",
+        "seniority",
+        "department",
+    }
+)
+
+
+def extract_contact_row(row: dict[str, str]) -> tuple[dict[str, str | None], dict[str, str]]:
+    """Split a raw spreadsheet row into contact fields and leftover extra columns."""
+    fields: dict[str, str | None] = {k: None for k in CONTACT_FIELDS}
+    extra: dict[str, str] = {}
+    for header, value in row.items():
+        field = contact_canonical_field(header)
+        raw = (value or "").strip()
+        if field in CONTACT_FIELDS:
+            if raw:
+                fields[field] = raw
+        elif raw:
+            extra[header] = raw
+    return fields, extra
