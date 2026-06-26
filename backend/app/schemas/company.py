@@ -108,6 +108,7 @@ class CompanyFilterOptions(BaseModel):
     countries: list[str]
     cities: list[str]
     segments: list[str]
+    tiers: list[str]
 
 
 class BulkEnrichRequest(BaseModel):

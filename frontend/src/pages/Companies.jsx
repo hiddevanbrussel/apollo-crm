@@ -8,7 +8,7 @@ import { useAuth } from "../context/AuthContext";
 
 const EMPTY = { name: "", domain: "", website: "", industry: "", country: "", city: "", phone: "", employee_count: "", description: "" };
 
-const EMPTY_FILTERS = { industry: "", country: "", city: "", market_segment: "", employees: "", status: "" };
+const EMPTY_FILTERS = { industry: "", country: "", city: "", market_segment: "", tier: "", employees: "", status: "" };
 
 const EMPLOYEE_BUCKETS = [
   { id: "1-10", label: "1–10", min: 1, max: 10 },
@@ -50,7 +50,7 @@ export default function Companies() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(params.get("search") || "");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [filterOptions, setFilterOptions] = useState({ industries: [], countries: [], cities: [], segments: [] });
+  const [filterOptions, setFilterOptions] = useState({ industries: [], countries: [], cities: [], segments: [], tiers: [] });
   const [showFilters, setShowFilters] = useState(true);
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -86,6 +86,7 @@ export default function Companies() {
           country: filters.country || undefined,
           city: filters.city || undefined,
           market_segment: filters.market_segment || undefined,
+          tier: filters.tier || undefined,
           min_employees: bucket?.min,
           max_employees: bucket?.max,
           page,
@@ -420,6 +421,14 @@ export default function Companies() {
                   <option value="">Any size</option>
                   {EMPLOYEE_BUCKETS.map((b) => (
                     <option key={b.id} value={b.id}>{b.label}</option>
+                  ))}
+                </select>
+              </FilterSection>
+              <FilterSection title="Tier" icon={Icon.Sparkles} active={!!filters.tier} defaultOpen={!!filters.tier}>
+                <select className="input" value={filters.tier} onChange={(e) => setFilter("tier", e.target.value)}>
+                  <option value="">All tiers</option>
+                  {filterOptions.tiers.map((v) => (
+                    <option key={v} value={v}>{v}</option>
                   ))}
                 </select>
               </FilterSection>

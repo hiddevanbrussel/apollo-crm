@@ -201,7 +201,7 @@ async def import_contacts(
                 if added:
                     domains_added += 1
                 elif clash_msg:
-                    errors.append(f"Row {index}: {clash_msg}")
+                    errors.append(f"Row {index}: {clash_msg} (contact imported without adding domain)")
 
         dedup_key = f"{company.id}|{(email or '').lower()}|{(full_name or '').lower()}"
         if dedup_key in seen_in_file:

@@ -131,6 +131,7 @@ def list_companies(
     country: str | None = None,
     city: str | None = None,
     market_segment: str | None = None,
+    tier: str | None = None,
     min_employees: int | None = Query(default=None, ge=0),
     max_employees: int | None = Query(default=None, ge=0),
     enrichment_status: str | None = None,
@@ -160,6 +161,8 @@ def list_companies(
         stmt = stmt.where(Company.employee_count <= max_employees)
     if market_segment:
         stmt = stmt.where(_segment_exists_clause(market_segment))
+    if tier:
+        stmt = stmt.where(func.lower(Company.tier) == tier.lower())
     if enrichment_status:
         stmt = stmt.where(Company.enrichment_status == enrichment_status)
 
@@ -196,6 +199,7 @@ def company_filter_options(db: Session = Depends(get_db), _: User = Depends(get_
         countries=_distinct(Company.country),
         cities=_distinct(Company.city),
         segments=[r.v for r in segment_rows],
+        tiers=_distinct(Company.tier),
     )
 
 
