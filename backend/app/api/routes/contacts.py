@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import csv
 import io
 
@@ -22,7 +22,9 @@ from app.schemas.contact import (
     ContactList,
     ContactOut,
     ContactUpdate,
+    WaterfallStatusOut,
 )
+from app.services.apollo_webhook import public_base_url_configured, waterfall_enrichment_enabled
 from app.services.contact_enrich import (
     enrich_contact_apollo,
     enrich_contact_auto,
@@ -52,6 +54,8 @@ MAX_EXPORT_ROWS = 10_000
 MAX_BULK_ENRICH = 50
 TITLE_FILTER_NONE = "__no_title__"
 UNENRICHED_CONTACT_STATUSES = ("none", "failed")
+WATERFALL_ENQUEUED_ENDPOINT = "/waterfall/enqueued"
+WATERFALL_WEBHOOK_ENDPOINT = "/webhooks/apollo/waterfall"
 
 
 def _contact_has_no_title():
@@ -169,6 +173,50 @@ def _run_bulk_enrich(db: Session, contacts: list[Contact]) -> BulkEnrichResult:
             label = contact.full_name or contact.email or f"#{contact.id}"
             result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
     return result
+
+
+def _waterfall_contacts_filter():
+    return or_(
+        Contact.enrichment_status == "pending",
+        Contact.apollo_data["waterfall_request"].isnot(None),
+        Contact.apollo_data["waterfall_webhook"].isnot(None),
+    )
+
+
+def _waterfall_state(contact: Contact) -> str:
+    apollo = contact.apollo_data or {}
+    if apollo.get("waterfall_webhook"):
+        return "completed"
+    if contact.enrichment_status == "pending" or apollo.get("waterfall_request"):
+        return "pending"
+    return "unknown"
+
+
+def _waterfall_log_times(db: Session, contact_ids: list[int]) -> dict[int, dict]:
+    if not contact_ids:
+        return {}
+    logs = db.scalars(
+        select(EnrichmentLog)
+        .where(
+            EnrichmentLog.entity_type == "contact",
+            EnrichmentLog.entity_id.in_(contact_ids),
+            EnrichmentLog.endpoint.in_((WATERFALL_ENQUEUED_ENDPOINT, WATERFALL_WEBHOOK_ENDPOINT)),
+        )
+        .order_by(EnrichmentLog.created_at.asc())
+    ).all()
+    times: dict[int, dict] = {}
+    for log in logs:
+        if log.entity_id is None:
+            continue
+        entry = times.setdefault(log.entity_id, {"requested_at": None, "completed_at": None, "webhook_updated": None})
+        if log.endpoint == WATERFALL_ENQUEUED_ENDPOINT:
+            entry["requested_at"] = log.created_at
+        elif log.endpoint == WATERFALL_WEBHOOK_ENDPOINT:
+            entry["completed_at"] = log.created_at
+            payload = log.request_payload or {}
+            if "updated" in payload:
+                entry["webhook_updated"] = bool(payload.get("updated"))
+    return times
 
 
 def _ensure_apollo_enabled(db: Session) -> None:
@@ -706,6 +754,74 @@ def bulk_enrich_unenriched_contacts(
         total_matched=total_matched,
         processed=len(contacts),
         remaining=remaining,
+    )
+
+
+@router.get("/waterfall-status", response_model=WaterfallStatusOut)
+def get_waterfall_status(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Overview of Apollo waterfall enrichment: pending vs completed contacts."""
+    wf_filter = _waterfall_contacts_filter()
+    pending = db.scalar(select(func.count(Contact.id)).where(Contact.enrichment_status == "pending")) or 0
+    completed = (
+        db.scalar(
+            select(func.count(Contact.id)).where(Contact.apollo_data["waterfall_webhook"].isnot(None))
+        )
+        or 0
+    )
+    total_triggered = (
+        db.scalar(
+            select(func.count(Contact.id)).where(Contact.apollo_data["waterfall_request"].isnot(None))
+        )
+        or 0
+    )
+
+    contacts = db.scalars(
+        select(Contact)
+        .where(wf_filter)
+        .options(joinedload(Contact.company))
+        .order_by(Contact.updated_at.desc())
+        .limit(limit)
+    ).unique().all()
+
+    log_times = _waterfall_log_times(db, [c.id for c in contacts])
+    items = []
+    for contact in contacts:
+        apollo = contact.apollo_data or {}
+        wf_req = apollo.get("waterfall_request") or {}
+        wf_hook = apollo.get("waterfall_webhook") or {}
+        times = log_times.get(contact.id, {})
+        webhook_updated = times.get("webhook_updated")
+        if webhook_updated is None and wf_hook:
+            webhook_updated = bool(wf_hook.get("people"))
+        requested_at = times.get("requested_at")
+        if requested_at is None and wf_req:
+            requested_at = contact.updated_at
+        items.append(
+            {
+                "id": contact.id,
+                "full_name": contact.full_name,
+                "email": contact.email,
+                "company_name": contact.company.name if contact.company else None,
+                "enrichment_status": contact.enrichment_status,
+                "waterfall_status": _waterfall_state(contact),
+                "request_id": wf_req.get("request_id") or wf_hook.get("request_id"),
+                "requested_at": requested_at,
+                "completed_at": times.get("completed_at"),
+                "webhook_updated": webhook_updated,
+            }
+        )
+
+    return WaterfallStatusOut(
+        waterfall_enabled=waterfall_enrichment_enabled(),
+        webhook_configured=public_base_url_configured(),
+        pending=pending,
+        completed=completed,
+        total_triggered=total_triggered,
+        items=items,
     )
 
 

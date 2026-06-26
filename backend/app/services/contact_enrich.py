@@ -391,6 +391,15 @@ def enrich_contact_apollo(
     if wf_status == "accepted":
         contact.enrichment_status = "pending"
         final_status = "pending"
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint="/waterfall/enqueued",
+                request_payload=waterfall_request or {},
+                response_status=202,
+            )
+        )
     else:
         contact.enrichment_status = "enriched"
         final_status = "enriched"

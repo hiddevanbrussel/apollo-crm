@@ -22,6 +22,11 @@ const EMPTY_FILTERS = {
 
 const NO_TITLE_FILTER = "__no_title__";
 
+function formatWhen(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
 function contactQueryParams({ search, filters, page, pageSize }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
@@ -128,6 +133,8 @@ export default function Contacts() {
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [enrichingSelected, setEnrichingSelected] = useState(false);
   const [enrichingUnenriched, setEnrichingUnenriched] = useState(false);
+  const [waterfallStatus, setWaterfallStatus] = useState(null);
+  const [showWaterfallLog, setShowWaterfallLog] = useState(true);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const [savedPresets, setSavedPresets] = useState([]);
@@ -176,6 +183,25 @@ export default function Contacts() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadWaterfallStatus = useCallback(async () => {
+    try {
+      const { data } = await api.get("/contacts/waterfall-status");
+      setWaterfallStatus(data);
+    } catch {
+      setWaterfallStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadWaterfallStatus();
+  }, [loadWaterfallStatus]);
+
+  useEffect(() => {
+    if (!waterfallStatus?.pending) return;
+    const timer = setInterval(loadWaterfallStatus, 3000);
+    return () => clearInterval(timer);
+  }, [waterfallStatus?.pending, loadWaterfallStatus]);
 
   const setFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -381,6 +407,7 @@ export default function Contacts() {
       }
       setSelectedIds(new Set());
       load();
+      loadWaterfallStatus();
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -438,6 +465,7 @@ export default function Contacts() {
       toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
       if (errors.length) toast.info(errors.slice(0, 3).join(" · "));
       load();
+      loadWaterfallStatus();
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -548,6 +576,87 @@ export default function Contacts() {
           ))}
         </div>
       )}
+
+      {waterfallStatus &&
+        (waterfallStatus.waterfall_enabled || waterfallStatus.total_triggered > 0) && (
+          <div className="card overflow-hidden">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-ink-50/60"
+              onClick={() => setShowWaterfallLog((v) => !v)}
+            >
+              <div>
+                <p className="text-sm font-semibold text-ink-900">Apollo waterfall log</p>
+                <p className="mt-0.5 text-xs text-ink-500">
+                  {waterfallStatus.pending} pending · {waterfallStatus.completed} completed ·{" "}
+                  {waterfallStatus.total_triggered} triggered
+                  {waterfallStatus.pending > 0 && " · auto-refreshing"}
+                </p>
+              </div>
+              <span className={`text-ink-400 transition-transform ${showWaterfallLog ? "rotate-90" : ""}`}>
+                <Icon.ChevronRight width={18} height={18} />
+              </span>
+            </button>
+            {showWaterfallLog && (
+              <div className="border-t border-ink-100 px-4 py-3">
+                {waterfallStatus.waterfall_enabled && !waterfallStatus.webhook_configured && (
+                  <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Waterfall is enabled but PUBLIC_BASE_URL is not set. Apollo cannot deliver webhook results until
+                    your public URL is configured.
+                  </p>
+                )}
+                {waterfallStatus.items.length === 0 ? (
+                  <p className="text-sm text-ink-400">No waterfall enrichments yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-ink-100 text-left text-xs text-ink-400">
+                          <th className="pb-2 pr-4 font-medium">Contact</th>
+                          <th className="pb-2 pr-4 font-medium">Waterfall</th>
+                          <th className="pb-2 pr-4 font-medium">Requested</th>
+                          <th className="pb-2 pr-4 font-medium">Completed</th>
+                          <th className="pb-2 font-medium">Request ID</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-ink-100">
+                        {waterfallStatus.items.map((item) => (
+                          <tr key={item.id}>
+                            <td className="py-2 pr-4">
+                              <Link to={`/contacts/${item.id}`} className="font-medium text-brand-600 hover:underline">
+                                {item.full_name || item.email || `#${item.id}`}
+                              </Link>
+                              {item.company_name && <p className="text-xs text-ink-400">{item.company_name}</p>}
+                            </td>
+                            <td className="py-2 pr-4">
+                              <StatusBadge
+                                status={item.waterfall_status === "completed" ? "enriched" : "pending"}
+                              />
+                            </td>
+                            <td className="py-2 pr-4 text-xs text-ink-500">{formatWhen(item.requested_at)}</td>
+                            <td className="py-2 pr-4 text-xs text-ink-500">
+                              {item.waterfall_status === "completed" ? (
+                                <>
+                                  {formatWhen(item.completed_at)}
+                                  {item.webhook_updated === false && (
+                                    <span className="mt-0.5 block text-ink-400">No new data</span>
+                                  )}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="py-2 font-mono text-xs text-ink-400">{item.request_id || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
       <div className="flex flex-col gap-5 lg:flex-row">
         <div className="min-w-0 flex-1">
@@ -702,6 +811,7 @@ export default function Contacts() {
                   <select className="input" value={filters.status} onChange={(e) => setFilter("status", e.target.value)}>
                     <option value="">All statuses</option>
                     <option value="enriched">Enriched</option>
+                    <option value="pending">In progress (waterfall)</option>
                     <option value="none">Not enriched</option>
                     <option value="failed">Failed</option>
                   </select>

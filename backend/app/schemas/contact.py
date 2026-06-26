@@ -112,6 +112,28 @@ class BulkEnrichFilteredResult(BulkEnrichResult):
     remaining: int = 0
 
 
+class WaterfallContactItem(BaseModel):
+    id: int
+    full_name: str | None = None
+    email: str | None = None
+    company_name: str | None = None
+    enrichment_status: str
+    waterfall_status: str
+    request_id: str | None = None
+    requested_at: datetime | None = None
+    completed_at: datetime | None = None
+    webhook_updated: bool | None = None
+
+
+class WaterfallStatusOut(BaseModel):
+    waterfall_enabled: bool
+    webhook_configured: bool
+    pending: int
+    completed: int
+    total_triggered: int
+    items: list[WaterfallContactItem]
+
+
 class ContactImportResult(BaseModel):
     total_rows: int
     created: int
