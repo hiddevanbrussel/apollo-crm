@@ -315,11 +315,44 @@ export default function ContactDetail() {
               <summary className="cursor-pointer text-sm font-semibold text-ink-700">
                 {contact.source === "import" ? "Import extra data" : "Raw Apollo data"}
               </summary>
+              {contact.apollo_data.raw && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium text-ink-500">Search / match API responses</p>
+                  <pre className="max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
+{JSON.stringify(contact.apollo_data.raw, null, 2)}
+                  </pre>
+                </div>
+              )}
               <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
 {JSON.stringify(
-  contact.source === "import" ? contact.apollo_data.import_extra || contact.apollo_data : contact.apollo_data,
+  contact.source === "import"
+    ? contact.apollo_data.import_extra || contact.apollo_data
+    : Object.fromEntries(
+        Object.entries(contact.apollo_data).filter(([key]) => !["raw"].includes(key)),
+      ),
   null,
-  2
+  2,
+)}
+              </pre>
+            </details>
+          )}
+
+          {contact.prospeo_data && Object.keys(contact.prospeo_data).length > 0 && (
+            <details className="mt-5 border-t border-ink-100 pt-4">
+              <summary className="cursor-pointer text-sm font-semibold text-ink-700">Raw Prospeo data</summary>
+              {contact.prospeo_data.raw && (
+                <div className="mt-3">
+                  <p className="mb-1 text-xs font-medium text-ink-500">Search / enrich API responses</p>
+                  <pre className="max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
+{JSON.stringify(contact.prospeo_data.raw, null, 2)}
+                  </pre>
+                </div>
+              )}
+              <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
+{JSON.stringify(
+  Object.fromEntries(Object.entries(contact.prospeo_data).filter(([key]) => key !== "raw")),
+  null,
+  2,
 )}
               </pre>
             </details>

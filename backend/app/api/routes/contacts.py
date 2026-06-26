@@ -22,7 +22,12 @@ from app.schemas.contact import (
     ContactOut,
     ContactUpdate,
 )
-from app.services.contact_enrich import enrich_contact_apollo, enrich_contact_auto, enrich_contact_prospeo
+from app.services.contact_enrich import (
+    enrich_contact_apollo,
+    enrich_contact_auto,
+    enrich_contact_prospeo,
+    store_apollo_person_profile,
+)
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
@@ -44,6 +49,11 @@ from app.services.settings_service import (
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_EXPORT_ROWS = 10_000
 MAX_BULK_ENRICH = 50
+TITLE_FILTER_NONE = "__no_title__"
+
+
+def _contact_has_no_title():
+    return or_(Contact.title.is_(None), func.trim(Contact.title) == "")
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -91,9 +101,16 @@ def _apply_contact_filters(
     title_values = [t.strip() for t in (titles or []) if t and t.strip()]
     if not title_values and title:
         title_values = [title.strip()]
+    include_no_title = any(t.lower() == TITLE_FILTER_NONE.lower() for t in title_values)
+    title_values = [t for t in title_values if t.lower() != TITLE_FILTER_NONE.lower()]
+    title_clauses = []
     if title_values:
         lowered = [t.lower() for t in title_values]
-        stmt = stmt.where(func.lower(Contact.title).in_(lowered))
+        title_clauses.append(func.lower(Contact.title).in_(lowered))
+    if include_no_title:
+        title_clauses.append(_contact_has_no_title())
+    if title_clauses:
+        stmt = stmt.where(or_(*title_clauses))
     if tier:
         stmt = stmt.join(Company, Contact.company_id == Company.id).where(
             func.lower(Company.tier) == tier.lower()
@@ -692,8 +709,7 @@ def fetch_complete_person(contact_id: int, db: Session = Depends(get_db), _: Use
                 continue
         setattr(contact, key, value)
 
-    merged = dict(contact.apollo_data or {})
-    merged.update(person)
+    merged = store_apollo_person_profile(contact, person)
     contact.apollo_data = merged
     contact.enrichment_status = "enriched"
     db.add(

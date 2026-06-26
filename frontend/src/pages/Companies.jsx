@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
-import { CompanyLogo, DomainTags, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -366,9 +366,6 @@ export default function Companies() {
                           <Link to={`/companies/${c.id}`} className="font-medium text-ink-900 hover:text-brand-600">
                             {c.name}
                           </Link>
-                          <p className="mt-1">
-                            <DomainTags domains={c.domains} primary={c.domain} />
-                          </p>
                         </div>
                       </div>
                     </td>

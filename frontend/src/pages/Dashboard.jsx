@@ -103,6 +103,12 @@ export default function Dashboard() {
   if (!data) return <PageLoader />;
 
   const firstName = user?.name?.split(" ")[0] || "there";
+  const enrichedContactPct = data.total_contacts
+    ? Math.round((data.enriched_contacts / data.total_contacts) * 100)
+    : 0;
+  const enrichedTitlePct = data.enriched_contacts
+    ? Math.round((data.enriched_contacts_with_title / data.enriched_contacts) * 100)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -168,7 +174,7 @@ export default function Dashboard() {
           icon={Icon.Sparkles}
           label="Enriched contacts"
           value={data.enriched_contacts.toLocaleString()}
-          sub={`${data.total_contacts ? Math.round((data.enriched_contacts / data.total_contacts) * 100) : 0}% of all contacts`}
+          sub={`${enrichedContactPct}% of all contacts · ${data.enriched_contacts_with_title.toLocaleString()} with title (${enrichedTitlePct}% of enriched)`}
           accent="text-purple-500"
         />
       </div>
@@ -182,6 +188,7 @@ export default function Dashboard() {
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Meter label="Companies enriched" value={data.enriched_companies} total={data.total_companies} color="bg-brand-500" />
               <Meter label="Contacts enriched" value={data.enriched_contacts} total={data.total_contacts} color="bg-purple-500" />
+              <Meter label="Enriched contacts with title" value={data.enriched_contacts_with_title} total={data.enriched_contacts} color="bg-violet-500" />
               <Meter label="Companies with domain" value={data.companies_with_domain} total={data.total_companies} color="bg-emerald-500" />
               <Meter label="Contacts with email" value={data.contacts_with_email} total={data.total_contacts} color="bg-sky-500" />
             </div>

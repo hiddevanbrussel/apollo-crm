@@ -20,6 +20,8 @@ const EMPTY_FILTERS = {
   titles: [],
 };
 
+const NO_TITLE_FILTER = "__no_title__";
+
 function contactQueryParams({ search, filters, page, pageSize }) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
@@ -658,11 +660,20 @@ export default function Contacts() {
                           </button>
                         )}
                       </div>
-                      {filterOptions.titles.length === 0 ? (
-                        <p className="text-xs text-ink-400">No titles in your contacts yet.</p>
-                      ) : (
-                        <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-ink-100 p-2">
-                          {filterOptions.titles.map((v) => (
+                      <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-ink-100 p-2">
+                        <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm text-ink-700 hover:bg-ink-50">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 rounded border-ink-300"
+                            checked={filters.titles.includes(NO_TITLE_FILTER)}
+                            onChange={() => toggleTitle(NO_TITLE_FILTER)}
+                          />
+                          <span className="leading-snug text-ink-500 italic">No title</span>
+                        </label>
+                        {filterOptions.titles.length === 0 ? (
+                          <p className="px-1 py-1 text-xs text-ink-400">No titled contacts yet.</p>
+                        ) : (
+                          filterOptions.titles.map((v) => (
                             <label key={v} className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm text-ink-700 hover:bg-ink-50">
                               <input
                                 type="checkbox"
@@ -672,9 +683,9 @@ export default function Contacts() {
                               />
                               <span className="leading-snug">{v}</span>
                             </label>
-                          ))}
-                        </div>
-                      )}
+                          ))
+                        )}
+                      </div>
                     </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Seniority</p>

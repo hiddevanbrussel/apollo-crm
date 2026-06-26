@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from sqlalchemy import func, select
@@ -108,6 +109,89 @@ def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, An
     )
 
 
+def _apollo_data_reserved_keys() -> frozenset[str]:
+    return frozenset({"raw", "import_extra", "waterfall_request", "waterfall_webhook"})
+
+
+def _store_apollo_raw_data(
+    contact: Contact,
+    *,
+    person: dict[str, Any],
+    match_response: dict[str, Any] | None = None,
+    search_response: dict[str, Any] | None = None,
+    match_strategy: str | None = None,
+    search_filters: dict[str, Any] | None = None,
+    waterfall_request: dict[str, Any] | None = None,
+) -> None:
+    """Persist Apollo match/search API payloads and person fields on the contact."""
+    merged = dict(contact.apollo_data or {})
+    reserved = _apollo_data_reserved_keys()
+
+    import_extra = merged.get("import_extra")
+    waterfall_webhook = merged.get("waterfall_webhook")
+
+    raw = dict(merged.get("raw") or {})
+    if match_response:
+        raw["match_response"] = match_response
+    if search_response:
+        raw["search_response"] = search_response
+    if match_strategy:
+        raw["match_strategy"] = match_strategy
+    if search_filters:
+        raw["search_filters"] = search_filters
+    raw["captured_at"] = datetime.now(timezone.utc).isoformat()
+    merged["raw"] = raw
+
+    if waterfall_request:
+        merged["waterfall_request"] = waterfall_request
+    if import_extra:
+        merged["import_extra"] = import_extra
+    if waterfall_webhook:
+        merged["waterfall_webhook"] = waterfall_webhook
+
+    if person:
+        for key, value in person.items():
+            if key not in reserved:
+                merged[key] = value
+
+    contact.apollo_data = merged
+
+
+def store_apollo_person_profile(contact: Contact, person: dict[str, Any]) -> dict[str, Any]:
+    """Merge a full Apollo person profile into apollo_data, preserving raw API payloads."""
+    merged = dict(contact.apollo_data or {})
+    reserved = _apollo_data_reserved_keys()
+    preserved = {key: merged[key] for key in reserved if key in merged}
+    for key, value in person.items():
+        if key not in reserved:
+            merged[key] = value
+    merged.update(preserved)
+    return merged
+
+
+def _store_prospeo_raw_data(
+    contact: Contact,
+    *,
+    enrich_response: dict[str, Any],
+    search_response: dict[str, Any] | None = None,
+    enrich_strategy: str | None = None,
+    search_filters: dict[str, Any] | None = None,
+) -> None:
+    """Persist Prospeo enrich/search API payloads on the contact."""
+    stored = dict(enrich_response)
+    meta: dict[str, Any] = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if enrich_strategy:
+        meta["enrich_strategy"] = enrich_strategy
+    if search_response:
+        meta["search_response"] = search_response
+    if search_filters:
+        meta["search_filters"] = search_filters
+    stored["raw"] = meta
+    contact.prospeo_data = stored
+
+
 def _match_strategy_label(payload: dict[str, Any]) -> str:
     if payload.get("email") and not payload.get("name") and not payload.get("first_name"):
         return "email_only"
@@ -143,19 +227,21 @@ def _try_search_then_match(
     webhook_url: str | None,
     reveal_personal_emails: bool = True,
     run_waterfall_email: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     """People API Search → people/match by Apollo id when direct match fails."""
     search_attempts = build_person_search_attempts(contact, company)
     if not search_attempts:
-        return {}, {}, None
+        return {}, {}, None, None
 
     last_search_payload: dict[str, Any] | None = None
+    last_search_response: dict[str, Any] | None = None
     for search_payload in search_attempts:
         last_search_payload = search_payload
         try:
             search_response = client.search_people_api(search_payload)
         except ApolloError:
             continue
+        last_search_response = search_response
 
         people = search_response.get("people") or search_response.get("contacts") or []
         best = pick_best_person_search_match(contact, company, people)
@@ -185,9 +271,9 @@ def _try_search_then_match(
             "search_filters": redact_match_log_payload(search_payload),
             "search_person_id": best.get("id"),
         }
-        return match_response, log_payload, search_payload
+        return match_response, log_payload, search_payload, search_response
 
-    return {}, {}, last_search_payload
+    return {}, {}, last_search_payload, last_search_response
 
 
 def enrich_contact_apollo(
@@ -231,9 +317,10 @@ def enrich_contact_apollo(
 
     response, request_payload, match_strategy, last_exc = _try_people_match(client, match_attempts)
     search_payload_used: dict[str, Any] | None = None
+    search_response_used: dict[str, Any] | None = None
 
     if not response:
-        response, request_payload, search_payload_used = _try_search_then_match(
+        response, request_payload, search_payload_used, search_response_used = _try_search_then_match(
             client,
             contact,
             company,
@@ -284,14 +371,22 @@ def enrich_contact_apollo(
 
     waterfall = response.get("waterfall") or {}
     wf_status = (waterfall.get("status") or "").lower()
-    merged_apollo = dict(contact.apollo_data or {})
+    waterfall_request = None
     if response.get("request_id") or waterfall:
-        merged_apollo["waterfall_request"] = {
+        waterfall_request = {
             "request_id": response.get("request_id"),
             "status": waterfall.get("status"),
             "message": waterfall.get("message"),
         }
-        contact.apollo_data = merged_apollo
+    _store_apollo_raw_data(
+        contact,
+        person=person,
+        match_response=response,
+        search_response=search_response_used if match_strategy == "search_then_match" else None,
+        match_strategy=match_strategy,
+        search_filters=search_payload_used if match_strategy == "search_then_match" else None,
+        waterfall_request=waterfall_request,
+    )
 
     if wf_status == "accepted":
         contact.enrichment_status = "pending"
@@ -328,10 +423,11 @@ def _try_prospeo_search_then_enrich(
     client: ProspeoService,
     contact: Contact,
     company: Company | None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     """Prospeo search-person → enrich-person by person_id."""
     search_attempts = build_prospeo_search_attempts(contact, company)
     last_filters: dict[str, Any] | None = None
+    last_search_response: dict[str, Any] | None = None
 
     for filters in search_attempts:
         last_filters = filters
@@ -341,6 +437,7 @@ def _try_prospeo_search_then_enrich(
             if exc.error_code in ("NO_RESULTS", "INVALID_FILTERS"):
                 continue
             raise
+        last_search_response = search_response
 
         results = search_response.get("results") or []
         best = pick_best_prospeo_search_match(contact, company, results)
@@ -359,9 +456,9 @@ def _try_prospeo_search_then_enrich(
         if not (enrich_response.get("person") or {}).get("person_id"):
             continue
 
-        return enrich_response, filters
+        return enrich_response, filters, search_response
 
-    return {}, last_filters
+    return {}, last_filters, last_search_response
 
 
 def enrich_contact_prospeo(
@@ -390,6 +487,7 @@ def enrich_contact_prospeo(
     log_data = {k: v for k, v in data.items() if k != "email"}
     enrich_strategy = "direct"
     search_filters_used: dict[str, Any] | None = None
+    search_response_used: dict[str, Any] | None = None
     response: dict[str, Any] = {}
     last_exc: ProspeoError | None = None
 
@@ -415,7 +513,9 @@ def enrich_contact_prospeo(
 
     if not response and can_search:
         try:
-            response, search_filters_used = _try_prospeo_search_then_enrich(client, contact, company)
+            response, search_filters_used, search_response_used = _try_prospeo_search_then_enrich(
+                client, contact, company
+            )
         except ProspeoError as exc:
             last_exc = exc
             contact.enrichment_status = "failed"
@@ -491,7 +591,13 @@ def enrich_contact_prospeo(
         external_id_field="prospeo_id",
         map_org=map_prospeo_organization,
     )
-    contact.prospeo_data = response
+    _store_prospeo_raw_data(
+        contact,
+        enrich_response=response,
+        search_response=search_response_used if enrich_strategy == "search_then_enrich" else None,
+        enrich_strategy=enrich_strategy,
+        search_filters=search_filters_used if enrich_strategy == "search_then_enrich" else None,
+    )
     contact.enrichment_status = "enriched"
     contact.source = "prospeo"
 

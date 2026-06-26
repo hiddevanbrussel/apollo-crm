@@ -26,6 +26,7 @@ class DashboardStats(BaseModel):
     total_contacts: int
     enriched_companies: int
     enriched_contacts: int
+    enriched_contacts_with_title: int
     companies_with_domain: int
     contacts_with_email: int
     top_industries: list[NameCount]

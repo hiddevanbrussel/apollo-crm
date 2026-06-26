@@ -40,6 +40,16 @@ def get_dashboard(db: Session = Depends(get_db), _: User = Depends(get_current_u
     enriched_contacts = (
         db.scalar(select(func.count(Contact.id)).where(Contact.enrichment_status == "enriched")) or 0
     )
+    enriched_contacts_with_title = (
+        db.scalar(
+            select(func.count(Contact.id)).where(
+                Contact.enrichment_status == "enriched",
+                Contact.title.is_not(None),
+                func.trim(Contact.title) != "",
+            )
+        )
+        or 0
+    )
     companies_with_domain = (
         db.scalar(
             select(func.count(Company.id)).where(
@@ -82,6 +92,7 @@ def get_dashboard(db: Session = Depends(get_db), _: User = Depends(get_current_u
         total_contacts=total_contacts,
         enriched_companies=enriched_companies,
         enriched_contacts=enriched_contacts,
+        enriched_contacts_with_title=enriched_contacts_with_title,
         companies_with_domain=companies_with_domain,
         contacts_with_email=contacts_with_email,
         top_industries=_top_counts(db, Company.industry),
