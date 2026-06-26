@@ -6,6 +6,7 @@ from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
 from app.models import Company, Contact, EnrichmentLog, SearchHistory, User
 from app.schemas.apollo import (
+    ApolloCreditsOut,
     ApolloStatus,
     BulkPersonEnrichInput,
     OrganizationEnrichInput,
@@ -70,6 +71,35 @@ def apollo_status(
         base_url=row.base_url,
         reachable=reachable,
         message=message,
+    )
+
+
+@router.get("/credits", response_model=ApolloCreditsOut)
+def apollo_credits(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Remaining Apollo credits for the configured API key (does not consume credits)."""
+    row = get_or_create_settings(db)
+    if not is_configured(row):
+        return ApolloCreditsOut(available=False, message="No Apollo API key configured.")
+    if not row.enabled:
+        return ApolloCreditsOut(available=False, message="Apollo integration is disabled.")
+
+    client = build_client(db)
+    try:
+        raw = client.get_api_profile(include_credit_usage=True)
+    except ApolloError as exc:
+        return ApolloCreditsOut(available=False, message=exc.message)
+
+    profile = raw.get("user") if isinstance(raw.get("user"), dict) else raw
+    if not isinstance(profile, dict):
+        return ApolloCreditsOut(available=False, message="Unexpected Apollo profile response.")
+
+    credits = profile.get("num_credits_remaining")
+    return ApolloCreditsOut(
+        available=True,
+        num_credits_remaining=int(credits) if credits is not None else None,
+        first_name=profile.get("first_name"),
+        last_name=profile.get("last_name"),
+        email=profile.get("email"),
     )
 
 

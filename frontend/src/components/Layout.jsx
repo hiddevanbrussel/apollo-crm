@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { formatApolloCredits } from "../utils/format";
 import AiAssistantWidget from "./AiAssistantWidget";
 import { Icon } from "./icons";
 
@@ -44,6 +46,29 @@ export default function Layout() {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const [apolloCredits, setApolloCredits] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCredits = () => {
+      api
+        .get("/apollo/credits")
+        .then((res) => {
+          if (active) setApolloCredits(res.data);
+        })
+        .catch(() => {
+          if (active) setApolloCredits({ available: false });
+        });
+    };
+
+    loadCredits();
+    const timer = window.setInterval(loadCredits, 5 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const onSearch = (e) => {
     e.preventDefault();
@@ -124,9 +149,25 @@ export default function Layout() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </form>
-            <div className="ml-auto flex items-center gap-3 text-sm text-ink-500">
-              <span className="hidden sm:inline">Welcome,</span>
-              <span className="font-medium text-ink-800">{user?.name?.split(" ")[0]}</span>
+            <div className="ml-auto flex items-center gap-3">
+              {apolloCredits?.available && apolloCredits.num_credits_remaining != null && (
+                <span
+                  className="inline-flex items-center rounded-full border border-ink-200 bg-white px-3.5 py-1.5 text-sm font-medium text-ink-700 shadow-sm"
+                  title={`${apolloCredits.num_credits_remaining.toLocaleString()} credits remaining`}
+                >
+                  {formatApolloCredits(apolloCredits.num_credits_remaining)} credits
+                </span>
+              )}
+              <div className="hidden items-center gap-2 text-sm text-ink-500 sm:flex">
+                <span>Welcome,</span>
+                <span className="font-medium text-ink-800">{user?.name?.split(" ")[0]}</span>
+              </div>
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-ink-700"
+                title={user?.email || user?.name}
+              >
+                {initials}
+              </div>
             </div>
           </header>
 

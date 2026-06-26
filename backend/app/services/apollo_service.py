@@ -9,6 +9,7 @@ Endpoints used (official Apollo API):
   - People enrichment      : POST /api/v1/people/match
   - Bulk people enrichment : POST /api/v1/people/bulk_match
   - Organization enrichment: POST /api/v1/organizations/enrich
+  - User profile / credits  : GET /api/v1/users/api_profile
 """
 
 from __future__ import annotations
@@ -186,6 +187,13 @@ class ApolloService:
                 "A company domain is required to enrich an organization.", status_code=400
             )
         return self._get("/api/v1/organizations/enrich", {"domain": domain})
+
+    def get_api_profile(self, *, include_credit_usage: bool = True) -> dict[str, Any]:
+        """Fetch the authenticated Apollo user profile (GET /api/v1/users/api_profile)."""
+        params: dict[str, Any] = {}
+        if include_credit_usage:
+            params["include_credit_usage"] = "true"
+        return self._get("/api/v1/users/api_profile", params)
 
     def test_connection(self) -> tuple[bool, str, int | None]:
         """Light-weight connectivity/credentials test.

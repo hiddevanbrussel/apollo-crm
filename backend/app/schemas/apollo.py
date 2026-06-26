@@ -73,6 +73,15 @@ class ApolloStatus(BaseModel):
     message: str | None = None
 
 
+class ApolloCreditsOut(BaseModel):
+    available: bool
+    num_credits_remaining: int | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    message: str | None = None
+
+
 class SaveSelection(BaseModel):
     """Save selected Apollo results into the CRM."""
 
