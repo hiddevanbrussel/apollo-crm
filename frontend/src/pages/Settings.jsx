@@ -431,6 +431,14 @@ export default function Settings() {
     return "bg-ink-100 text-ink-600";
   };
 
+  const resultClass = (result) => {
+    if (result === "enriched") return "bg-green-50 text-green-700";
+    if (result === "pending") return "bg-amber-50 text-amber-700";
+    if (result === "failed") return "bg-red-50 text-red-700";
+    if (result === "skipped") return "bg-ink-100 text-ink-500";
+    return "bg-ink-100 text-ink-600";
+  };
+
   const JobCard = ({ job, active = false }) => (
     <div className={`rounded-lg border p-4 ${active ? "border-brand-200 bg-brand-50/30" : "border-ink-100"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -469,29 +477,37 @@ export default function Settings() {
         )}
       </p>
 
-      {job.batches?.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
+      {job.items?.length > 0 && (
+        <div className="mt-3 max-h-64 overflow-y-auto overflow-x-auto">
           <table className="w-full text-xs">
-            <thead>
+            <thead className="sticky top-0 bg-white">
               <tr className="border-b border-ink-100 text-left text-ink-400">
-                <th className="pb-1.5 pr-3 font-medium">Batch</th>
-                <th className="pb-1.5 pr-3 font-medium">Contacts</th>
+                <th className="pb-1.5 pr-3 font-medium">#</th>
+                <th className="pb-1.5 pr-3 font-medium">Contact</th>
                 <th className="pb-1.5 pr-3 font-medium">Status</th>
-                <th className="pb-1.5 font-medium">Result</th>
+                <th className="pb-1.5 font-medium">Detail</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
-              {job.batches.map((batch) => (
-                <tr key={batch.index}>
-                  <td className="py-1.5 pr-3 font-medium text-ink-700">#{batch.index}</td>
-                  <td className="py-1.5 pr-3 text-ink-600">{batch.contact_count}</td>
+              {job.items.map((item) => (
+                <tr key={item.index} className={item.status === "running" ? "bg-amber-50/50" : ""}>
+                  <td className="py-1.5 pr-3 font-medium text-ink-700">{item.index}</td>
+                  <td className="py-1.5 pr-3 text-ink-700">{item.label || `#${item.contact_id}`}</td>
                   <td className="py-1.5 pr-3">
-                    <span className={`badge capitalize ${batchStatusClass(batch.status)}`}>{batch.status}</span>
+                    {item.result ? (
+                      <span className={`badge capitalize ${resultClass(item.result)}`}>{item.result}</span>
+                    ) : (
+                      <span className={`badge capitalize ${batchStatusClass(item.status)}`}>{item.status}</span>
+                    )}
                   </td>
                   <td className="py-1.5 text-ink-500">
-                    {batch.status === "queued"
-                      ? "Waiting"
-                      : `${batch.enriched} ok · ${batch.pending} pending · ${batch.failed} failed`}
+                    {item.error
+                      ? item.error
+                      : item.provider
+                        ? `via ${item.provider}`
+                        : item.status === "queued"
+                          ? "Waiting"
+                          : "—"}
                   </td>
                 </tr>
               ))}
@@ -630,8 +646,8 @@ export default function Settings() {
           <div className="card p-5">
             <h3 className="text-sm font-semibold text-ink-900">Contact enrichment</h3>
             <p className="mt-1 text-xs text-ink-500">
-              Start from Contacts via &quot;Match unenriched&quot; or &quot;Match selected&quot;. Batches of 50 are
-              planned automatically before execution.
+              Start from Contacts via &quot;Match unenriched&quot; or &quot;Match selected&quot;. Contacts are matched
+              one at a time so you can see exactly where a lookup fails.
             </p>
             {enrichJob && ["queued", "running"].includes(enrichJob.status) ? (
               <div className="mt-4">

@@ -153,15 +153,14 @@ class ContactEnrichJobStart(BaseModel):
     filters: ContactEnrichJobFilters | None = None
 
 
-class ContactEnrichBatchOut(BaseModel):
+class ContactEnrichJobItemOut(BaseModel):
     index: int
-    contact_count: int
+    contact_id: int
+    label: str | None = None
     status: str
-    enriched: int
-    pending: int
-    failed: int
-    skipped: int = 0
-    errors: list[str] = Field(default_factory=list)
+    result: str | None = None
+    provider: str | None = None
+    error: str | None = None
 
 
 class ContactEnrichJobLogEntry(BaseModel):
@@ -175,16 +174,14 @@ class ContactEnrichJobOut(BaseModel):
     source: str
     filters: dict | None = None
     total_contacts: int
-    batch_size: int
-    batch_count: int
     processed_contacts: int
     enriched: int
     pending: int
     failed: int
     skipped: int
-    current_batch: int | None = None
+    current_index: int | None = None
     current_contact: str | None = None
-    batches: list[ContactEnrichBatchOut]
+    items: list[ContactEnrichJobItemOut]
     log: list[ContactEnrichJobLogEntry]
     error: str | None = None
     started_at: float

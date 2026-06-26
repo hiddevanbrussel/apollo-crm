@@ -402,10 +402,9 @@ export default function Contacts() {
   const enrichSelected = async () => {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    const batchCount = Math.ceil(ids.length / 50) || 1;
     if (
       !confirm(
-        `Match ${ids.length} selected contact(s)? ${batchCount} batch(es) will be prepared and run in the background.`
+        `Match ${ids.length} selected contact(s) one at a time in the background?`
       )
     ) {
       return;
@@ -417,7 +416,7 @@ export default function Contacts() {
         toast.info("An enrichment job is already running. See Settings → Activity for progress.");
       } else {
         toast.success(
-          `Job started: ${data.job.batch_count} batch(es) for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+          `Job started for ${data.job.total_contacts} contacts (one at a time). Track progress in Settings → Activity.`
         );
         setSelectedIds(new Set());
       }
@@ -438,10 +437,9 @@ export default function Contacts() {
         toast.info("No contacts to enrich for the current filters.");
         return;
       }
-      const batchCount = Math.ceil(preview.total_matched / 50) || 1;
       if (
         !confirm(
-          `Match ${preview.total_matched} contact(s)? ${batchCount} batch(es) will be prepared and run in the background.`
+          `Match ${preview.total_matched} contact(s) one at a time in the background?`
         )
       ) {
         return;
@@ -454,7 +452,7 @@ export default function Contacts() {
         toast.info("An enrichment job is already running. See Settings → Activity for progress.");
       } else {
         toast.success(
-          `Job started: ${data.job.batch_count} batch(es) for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+          `Job started for ${data.job.total_contacts} contacts (one at a time). Track progress in Settings → Activity.`
         );
       }
     } catch (err) {

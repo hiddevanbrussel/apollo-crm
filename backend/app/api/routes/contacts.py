@@ -812,7 +812,7 @@ def start_contact_enrich_job(
         contact_ids,
         source=source,
         filters=filters,
-        batch_size=MAX_BULK_ENRICH,
+        db=db,
     )
     return ContactEnrichJobStartResult(job=_job_out(job), started=started)
 
