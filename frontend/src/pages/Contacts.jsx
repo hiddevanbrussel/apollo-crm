@@ -10,6 +10,7 @@ const EMPTY = { first_name: "", last_name: "", title: "", email: "", phone: "", 
 
 const EMPTY_FILTERS = {
   company_id: "",
+  tier: "",
   source: "",
   status: "",
   country: "",
@@ -25,6 +26,7 @@ function contactQueryParams({ search, filters, page, pageSize }) {
   if (filters.status) params.set("enrichment_status", filters.status);
   if (filters.source) params.set("source", filters.source);
   if (filters.company_id) params.set("company_id", filters.company_id);
+  if (filters.tier) params.set("tier", filters.tier);
   if (filters.country) params.set("country", filters.country);
   if (filters.city) params.set("city", filters.city);
   if (filters.seniority) params.set("seniority", filters.seniority);
@@ -99,7 +101,7 @@ function storePresets(userId, presets) {
 
 export default function Contacts() {
   const toast = useToast();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -110,8 +112,10 @@ export default function Contacts() {
     seniorities: [],
     departments: [],
     titles: [],
+    tiers: [],
     companies: [],
   });
+  const [apolloReady, setApolloReady] = useState(false);
   const [showFilters, setShowFilters] = useState(true);
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -120,6 +124,7 @@ export default function Contacts() {
   const [saving, setSaving] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
+  const [enrichingSelected, setEnrichingSelected] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const [savedPresets, setSavedPresets] = useState([]);
@@ -136,6 +141,13 @@ export default function Contacts() {
       .get("/contacts/filter-options")
       .then((res) => setFilterOptions(res.data))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api
+      .get("/apollo/status")
+      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
+      .catch(() => setApolloReady(false));
   }, []);
 
   const load = useCallback(async () => {
@@ -332,6 +344,41 @@ export default function Contacts() {
     }
   };
 
+  const enrichSelected = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    if (ids.length > 50) {
+      toast.error("Maximum 50 contacts per bulk match.");
+      return;
+    }
+    if (
+      !confirm(
+        `Match ${ids.length} selected contact(s) via Apollo? This uses Apollo credits for each contact.`
+      )
+    ) {
+      return;
+    }
+    setEnrichingSelected(true);
+    try {
+      const { data: res } = await api.post("/contacts/bulk-enrich", { ids });
+      const parts = [];
+      if (res.enriched) parts.push(`${res.enriched} enriched`);
+      if (res.pending) parts.push(`${res.pending} pending`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      if (res.skipped) parts.push(`${res.skipped} skipped`);
+      toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
+      if (res.errors?.length) {
+        toast.info(res.errors.slice(0, 3).join(" · "));
+      }
+      setSelectedIds(new Set());
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnrichingSelected(false);
+    }
+  };
+
   const pageIds = data?.items?.map((c) => c.id) || [];
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
   const someOnPageSelected = pageIds.some((id) => selectedIds.has(id));
@@ -371,6 +418,21 @@ export default function Contacts() {
             {selectedIds.size} contact{selectedIds.size === 1 ? "" : "s"} selected
           </span>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                className="btn-primary"
+                onClick={enrichSelected}
+                disabled={enrichingSelected || !apolloReady}
+                title={apolloReady ? "Match selected contacts via Apollo" : "Apollo is off — enable it in Settings"}
+              >
+                {enrichingSelected ? (
+                  <Spinner className="h-4 w-4 border-white/40 border-t-white" />
+                ) : (
+                  <Icon.Sparkles width={18} height={18} />
+                )}
+                Match via Apollo
+              </button>
+            )}
             <button className="btn-secondary" onClick={() => setSelectedIds(new Set())}>
               Clear selection
             </button>
@@ -531,6 +593,17 @@ export default function Contacts() {
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+                </FilterSection>
+                <FilterSection title="Company tier" icon={Icon.Sparkles} active={!!filters.tier} defaultOpen={!!filters.tier}>
+                  <select className="input" value={filters.tier} onChange={(e) => setFilter("tier", e.target.value)}>
+                    <option value="">All tiers</option>
+                    {filterOptions.tiers.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-xs text-ink-400">
+                    Shows contacts linked to companies with this tier.
+                  </p>
                 </FilterSection>
                 <FilterSection title="Source" icon={Icon.Sparkles} active={!!filters.source} defaultOpen={!!filters.source}>
                   <select className="input" value={filters.source} onChange={(e) => setFilter("source", e.target.value)}>

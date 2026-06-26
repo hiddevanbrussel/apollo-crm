@@ -12,6 +12,8 @@ from app.models import Company, Contact, EnrichmentLog, User
 from app.schemas.contact import (
     BulkDeleteRequest,
     BulkDeleteResult,
+    BulkEnrichRequest,
+    BulkEnrichResult,
     ContactCompanyOption,
     ContactCreate,
     ContactFilterOptions,
@@ -20,11 +22,8 @@ from app.schemas.contact import (
     ContactOut,
     ContactUpdate,
 )
-from app.services.apollo_mapper import (
-    build_person_match_attempts,
-    map_person,
-    person_match_is_empty,
-)
+from app.services.contact_enrich import enrich_contact_apollo
+from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
 from app.services.import_service import (
@@ -33,11 +32,11 @@ from app.services.import_service import (
     extract_contact_row,
     parse_contact_spreadsheet,
 )
-from app.services.apollo_webhook import build_contact_webhook_url, redact_match_log_payload
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_EXPORT_ROWS = 10_000
+MAX_BULK_ENRICH = 50
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -55,6 +54,7 @@ def _apply_contact_filters(
     department: str | None = None,
     title: str | None = None,
     titles: list[str] | None = None,
+    tier: str | None = None,
 ):
     if search:
         like = f"%{search.lower()}%"
@@ -87,6 +87,10 @@ def _apply_contact_filters(
     if title_values:
         lowered = [t.lower() for t in title_values]
         stmt = stmt.where(func.lower(Contact.title).in_(lowered))
+    if tier:
+        stmt = stmt.join(Company, Contact.company_id == Company.id).where(
+            func.lower(Company.tier) == tier.lower()
+        )
     return stmt
 
 
@@ -117,6 +121,7 @@ def list_contacts(
     department: str | None = None,
     title: str | None = None,
     titles: list[str] | None = Query(default=None),
+    tier: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
@@ -132,6 +137,7 @@ def list_contacts(
         department=department,
         title=title,
         titles=titles,
+        tier=tier,
     )
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -159,12 +165,21 @@ def contact_filter_options(db: Session = Depends(get_db), _: User = Depends(get_
         .order_by(Company.name)
     ).all()
 
+    tier_rows = db.execute(
+        select(Company.tier)
+        .join(Contact, Contact.company_id == Company.id)
+        .where(Company.tier.is_not(None), func.trim(Company.tier) != "")
+        .distinct()
+        .order_by(Company.tier)
+    ).all()
+
     return ContactFilterOptions(
         countries=_distinct(Contact.country),
         cities=_distinct(Contact.city),
         seniorities=_distinct(Contact.seniority),
         departments=_distinct(Contact.department),
         titles=_distinct(Contact.title),
+        tiers=[r[0] for r in tier_rows],
         companies=[ContactCompanyOption(id=r.id, name=r.name) for r in company_rows],
     )
 
@@ -183,6 +198,7 @@ def export_contacts(
     department: str | None = None,
     title: str | None = None,
     titles: list[str] | None = Query(default=None),
+    tier: str | None = None,
 ):
     """Export filtered contacts as CSV (max 10,000 rows)."""
     stmt = _apply_contact_filters(
@@ -197,6 +213,7 @@ def export_contacts(
         department=department,
         title=title,
         titles=titles,
+        tier=tier,
     )
     stmt = stmt.order_by(Contact.updated_at.desc()).limit(MAX_EXPORT_ROWS)
     contacts = db.execute(stmt).scalars().all()
@@ -497,6 +514,48 @@ def bulk_delete_contacts(
     return BulkDeleteResult(deleted=result.rowcount or 0)
 
 
+@router.post("/bulk-enrich", response_model=BulkEnrichResult)
+def bulk_enrich_contacts(
+    payload: BulkEnrichRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """Match selected contacts via Apollo people/match (sequential, max 50)."""
+    ids = list(dict.fromkeys(payload.ids))
+    if not ids:
+        return BulkEnrichResult()
+    if len(ids) > MAX_BULK_ENRICH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum {MAX_BULK_ENRICH} contacts per bulk enrich request.",
+        )
+
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+
+    result = BulkEnrichResult()
+    for contact_id in ids:
+        contact = db.get(Contact, contact_id)
+        if not contact:
+            result.skipped += 1
+            result.errors.append(f"Contact {contact_id}: not found.")
+            continue
+
+        enrich_result = enrich_contact_apollo(db, client, contact)
+        if enrich_result.ok:
+            if enrich_result.status == "pending":
+                result.pending += 1
+            else:
+                result.enriched += 1
+        else:
+            result.failed += 1
+            label = contact.full_name or contact.email or f"#{contact.id}"
+            result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
+
+    db.commit()
+    return result
+
+
 @router.delete("/all", response_model=BulkDeleteResult)
 def delete_all_contacts(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     result = db.execute(delete(Contact))
@@ -626,153 +685,16 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found.")
 
-    company = db.get(Company, contact.company_id) if contact.company_id else None
-    match_attempts = build_person_match_attempts(contact, company)
-    if not match_attempts:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Not enough data to match this person. Provide at least an email, "
-                "LinkedIn URL, full name, or first and last name."
-            ),
-        )
-
-    needs_webhook = any(p.get("run_waterfall_email") for p in match_attempts)
-    webhook_url = None
-    if needs_webhook:
-        webhook_url = build_contact_webhook_url(contact.id)
-        if not webhook_url:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "PUBLIC_BASE_URL is not configured. Set this environment variable "
-                    "(e.g. https://ai.xential.nl) to use waterfall email enrichment."
-                ),
-            )
-        for payload in match_attempts:
-            payload["webhook_url"] = webhook_url
-
     _ensure_apollo_enabled(db)
     client = build_client(db)
-
-    response: dict = {}
-    request_payload: dict = {}
-    match_strategy = "full"
-    last_exc: ApolloError | None = None
-    for idx, payload in enumerate(match_attempts):
-        try:
-            attempt_response = client.enrich_person(payload)
-        except ApolloError as exc:
-            last_exc = exc
-            continue
-        person = attempt_response.get("person") or {}
-        if person_match_is_empty(person):
-            continue
-        response = attempt_response
-        request_payload = payload
-        match_strategy = "email_only" if idx == 0 and payload.get("email") else "full"
-        break
-
-    log_payload = {**redact_match_log_payload(request_payload), "match_strategy": match_strategy}
-
-    if not response:
-        if last_exc:
-            contact.enrichment_status = "failed"
-            db.add(
-                EnrichmentLog(
-                    entity_type="contact",
-                    entity_id=contact.id,
-                    endpoint="/api/v1/people/match",
-                    request_payload=redact_match_log_payload(match_attempts[-1]),
-                    response_status=last_exc.status_code,
-                )
-            )
-            db.commit()
-            raise HTTPException(status_code=last_exc.status_code or 502, detail=last_exc.message)
-
-        contact.enrichment_status = "failed"
-        db.add(
-            EnrichmentLog(
-                entity_type="contact",
-                entity_id=contact.id,
-                endpoint="/api/v1/people/match",
-                request_payload=redact_match_log_payload(match_attempts[-1]),
-                response_status=404,
-            )
-        )
+    enrich_result = enrich_contact_apollo(db, client, contact)
+    if not enrich_result.ok:
         db.commit()
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "Apollo found no matching person. Add email, LinkedIn, or link a company "
-                "for better matching and try again."
-            ),
-        )
+        status = 404 if enrich_result.error and "no matching" in enrich_result.error.lower() else 400
+        if enrich_result.error and "PUBLIC_BASE_URL" in enrich_result.error:
+            status = 400
+        raise HTTPException(status_code=status, detail=enrich_result.error or "Apollo enrich failed.")
 
-    person = response.get("person") or {}
-
-    mapped = map_person(person)
-    org = mapped.pop("_organization", None)
-    for key, value in mapped.items():
-        if key == "source":
-            continue
-        if value not in (None, "") and hasattr(contact, key):
-            if key == "email" and value and contact.email and value.lower() == contact.email.lower():
-                continue
-            if key == "apollo_id" and value:
-                clash = db.execute(
-                    select(Contact).where(Contact.apollo_id == value)
-                ).scalar_one_or_none()
-                if clash and clash.id != contact.id:
-                    continue
-            setattr(contact, key, value)
-
-    # Optionally upsert the discovered company and link it.
-    if org and not contact.company_id:
-        from app.services.apollo_mapper import map_organization
-
-        org_fields = map_organization(org)
-        domain = org_fields.get("domain")
-        existing_company = None
-        if domain:
-            existing_company = db.execute(
-                select(Company).where(func.lower(Company.domain) == domain.lower())
-            ).scalar_one_or_none()
-        if not existing_company and org_fields.get("name"):
-            existing_company = Company(
-                **{k: v for k, v in org_fields.items() if hasattr(Company, k)}
-            )
-            existing_company.enrichment_status = "enriched"
-            db.add(existing_company)
-            db.flush()
-        if existing_company:
-            contact.company_id = existing_company.id
-
-    waterfall = response.get("waterfall") or {}
-    wf_status = (waterfall.get("status") or "").lower()
-    merged_apollo = dict(contact.apollo_data or {})
-    if response.get("request_id") or waterfall:
-        merged_apollo["waterfall_request"] = {
-            "request_id": response.get("request_id"),
-            "status": waterfall.get("status"),
-            "message": waterfall.get("message"),
-        }
-        contact.apollo_data = merged_apollo
-
-    if wf_status == "accepted":
-        contact.enrichment_status = "pending"
-    else:
-        contact.enrichment_status = "enriched"
-
-    db.add(
-        EnrichmentLog(
-            entity_type="contact",
-            entity_id=contact.id,
-            endpoint="/api/v1/people/match",
-            request_payload=log_payload,
-            response_status=200,
-        )
-    )
     db.commit()
     db.refresh(contact)
     return ContactOut.model_validate(contact)

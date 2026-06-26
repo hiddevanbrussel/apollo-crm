@@ -80,6 +80,7 @@ class ContactFilterOptions(BaseModel):
     seniorities: list[str]
     departments: list[str]
     titles: list[str]
+    tiers: list[str]
     companies: list[ContactCompanyOption]
 
 
@@ -89,6 +90,18 @@ class BulkDeleteRequest(BaseModel):
 
 class BulkDeleteResult(BaseModel):
     deleted: int
+
+
+class BulkEnrichRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+class BulkEnrichResult(BaseModel):
+    enriched: int = 0
+    pending: int = 0
+    failed: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
 
 
 class ContactImportResult(BaseModel):
