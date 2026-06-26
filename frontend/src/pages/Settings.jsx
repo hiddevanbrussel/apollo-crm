@@ -94,12 +94,21 @@ export default function Settings() {
   const [logokitTest, setLogokitTest] = useState(null);
   const [apolloReady, setApolloReady] = useState(false);
 
+  // Prospeo state
+  const [prospeo, setProspeo] = useState(null);
+  const [prospeoKey, setProspeoKey] = useState("");
+  const [prospeoUrl, setProspeoUrl] = useState("");
+  const [prospeoSaving, setProspeoSaving] = useState(false);
+  const [prospeoTesting, setProspeoTesting] = useState(false);
+  const [prospeoTest, setProspeoTest] = useState(null);
+
   const load = async () => {
     try {
-      const [{ data: a }, { data: g }, { data: l }] = await Promise.all([
+      const [{ data: a }, { data: g }, { data: l }, { data: p }] = await Promise.all([
         api.get("/settings/apollo"),
         api.get("/settings/groq"),
         api.get("/settings/logokit"),
+        api.get("/settings/prospeo"),
       ]);
       setApollo(a);
       setApolloUrl(a.base_url);
@@ -108,6 +117,8 @@ export default function Settings() {
       setGroqModel(g.model);
       setLogokit(l);
       setLogokitUrl(l.base_url);
+      setProspeo(p);
+      setProspeoUrl(p.base_url);
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -318,7 +329,59 @@ export default function Settings() {
     }
   };
 
-  if (!apollo || !groq || !logokit) return <PageLoader />;
+  // --- Prospeo handlers ---
+  const toggleProspeo = async (value) => {
+    try {
+      const { data } = await api.put("/settings/prospeo", { enabled: value });
+      setProspeo(data);
+      toast.success(`Prospeo ${value ? "enabled" : "disabled"}.`);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const saveProspeo = async () => {
+    setProspeoSaving(true);
+    try {
+      const payload = { base_url: prospeoUrl };
+      if (prospeoKey.trim()) payload.api_key = prospeoKey.trim();
+      const { data } = await api.put("/settings/prospeo", payload);
+      setProspeo(data);
+      setProspeoKey("");
+      toast.success("Prospeo settings saved.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setProspeoSaving(false);
+    }
+  };
+
+  const clearProspeoKey = async () => {
+    if (!confirm("Remove the Prospeo API key?")) return;
+    try {
+      const { data } = await api.put("/settings/prospeo", { clear_api_key: true });
+      setProspeo(data);
+      toast.success("Prospeo API key removed.");
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const testProspeo = async () => {
+    setProspeoTesting(true);
+    setProspeoTest(null);
+    try {
+      const { data } = await api.post("/settings/prospeo/test");
+      setProspeoTest(data);
+      data.success ? toast.success(data.message) : toast.error(data.message);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setProspeoTesting(false);
+    }
+  };
+
+  if (!apollo || !groq || !logokit || !prospeo) return <PageLoader />;
 
   const TestResult = ({ result }) =>
     result ? (
@@ -391,6 +454,19 @@ export default function Settings() {
               onView={() => {
                 setGroqTest(null);
                 setDetail("groq");
+              }}
+            />
+            <IntegrationTile
+              icon={<Icon.Users width={18} height={18} className="text-violet-600" />}
+              accent="bg-violet-50"
+              title="Prospeo API"
+              description="Enrich contacts via Prospeo enrich-person — verified emails and B2B profile data as a fallback or alternative to Apollo."
+              configured={prospeo.configured}
+              enabled={prospeo.enabled}
+              onToggle={toggleProspeo}
+              onView={() => {
+                setProspeoTest(null);
+                setDetail("prospeo");
               }}
             />
             <IntegrationTile
@@ -708,6 +784,58 @@ export default function Settings() {
             . Save your token before testing. You can also test an unsaved token directly.
           </div>
           <TestResult result={logokitTest} />
+        </div>
+      </Modal>
+
+      {/* Prospeo detail modal */}
+      <Modal
+        open={detail === "prospeo"}
+        onClose={() => setDetail(null)}
+        title="Prospeo API"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={testProspeo} disabled={prospeoTesting || !prospeo.configured}>
+              {prospeoTesting ? <Spinner className="h-4 w-4" /> : <Icon.Globe width={18} height={18} />} Test connection
+            </button>
+            <button className="btn-primary" onClick={saveProspeo} disabled={prospeoSaving}>
+              {prospeoSaving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border border-ink-100 bg-ink-50/60 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-ink-900">Integration status</p>
+              <p className="text-xs text-ink-400">Enable to enrich contacts via Prospeo enrich-person.</p>
+            </div>
+            <Toggle checked={prospeo.enabled} onChange={toggleProspeo} />
+          </div>
+          <Field label="API key">
+            <div className="flex gap-2">
+              <input
+                className="input"
+                type="password"
+                placeholder={prospeo.configured ? prospeo.api_key_masked || "••••••••" : "Enter your Prospeo API key"}
+                value={prospeoKey}
+                onChange={(e) => setProspeoKey(e.target.value)}
+              />
+              {prospeo.configured && (
+                <button className="btn-danger whitespace-nowrap" onClick={clearProspeoKey}>Remove</button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-ink-400">
+              Stored encrypted. Find your key in the{" "}
+              <a href="https://prospeo.io/dashboard" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
+                Prospeo dashboard
+              </a>
+              .
+            </p>
+          </Field>
+          <Field label="Base URL">
+            <input className="input" value={prospeoUrl} onChange={(e) => setProspeoUrl(e.target.value)} placeholder="https://api.prospeo.io" />
+          </Field>
+          <TestResult result={prospeoTest} />
         </div>
       </Modal>
     </div>

@@ -83,10 +83,11 @@ export function StatusBadge({ status }) {
   );
 }
 
-const SOURCE_LABELS = { apollo: "APOLLO", seed: "DEMO", import: "IMPORT", manual: "MANUAL" };
+const SOURCE_LABELS = { apollo: "APOLLO", prospeo: "PROSPEO", seed: "DEMO", import: "IMPORT", manual: "MANUAL" };
 
 const SOURCE_STYLES = {
   apollo: "border-accent-200 bg-accent-50 text-accent-600",
+  prospeo: "border-violet-200 bg-violet-50 text-violet-700",
   import: "border-green-200 bg-green-50 text-green-700",
 };
 

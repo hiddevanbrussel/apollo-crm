@@ -24,7 +24,7 @@ from app.schemas.company import (
     ImportResult,
 )
 from app.schemas.contact import BulkEnrichResult, ContactOut, FindPeopleResult
-from app.services.contact_enrich import enrich_contact_apollo
+from app.services.contact_enrich import enrich_contact_auto
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
@@ -49,9 +49,11 @@ from app.services.settings_service import (
     build_client,
     build_groq_client,
     get_or_create_groq_settings,
+    get_or_create_prospeo_settings,
     get_or_create_settings,
     groq_is_configured,
     is_configured,
+    prospeo_is_configured,
 )
 
 
@@ -65,6 +67,18 @@ def _ensure_apollo_enabled(db: Session) -> None:
     if not is_configured(row):
         raise HTTPException(
             status_code=400, detail="No Apollo API key configured. Add one in Settings."
+        )
+
+
+def _ensure_enrichment_enabled(db: Session) -> None:
+    apollo = get_or_create_settings(db)
+    prospeo = get_or_create_prospeo_settings(db)
+    apollo_on = apollo.enabled and is_configured(apollo)
+    prospeo_on = prospeo.enabled and prospeo_is_configured(prospeo)
+    if not apollo_on and not prospeo_on:
+        raise HTTPException(
+            status_code=400,
+            detail="No enrichment provider enabled. Configure Apollo or Prospeo in Settings.",
         )
 
 
@@ -791,7 +805,7 @@ def enrich_company_contacts(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
-    """Match all contacts linked to this company via Apollo people/match."""
+    """Match all contacts linked to this company via Apollo/Prospeo."""
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
@@ -807,12 +821,11 @@ def enrich_company_contacts(
             detail=f"This company has {len(contacts)} contacts; maximum {MAX_COMPANY_CONTACT_ENRICH} per bulk enrich.",
         )
 
-    _ensure_apollo_enabled(db)
-    client = build_client(db)
+    _ensure_enrichment_enabled(db)
 
     result = BulkEnrichResult()
     for contact in contacts:
-        enrich_result = enrich_contact_apollo(db, client, contact, company=company)
+        enrich_result = enrich_contact_auto(db, contact, company=company)
         if enrich_result.ok:
             if enrich_result.status == "pending":
                 result.pending += 1

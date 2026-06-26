@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Waterfall enrichment queries third-party sources and may share data with Apollo. Off by default.
     APOLLO_WATERFALL_ENABLED: bool = False
 
+    # Prospeo
+    PROSPEO_BASE_URL: str = "https://api.prospeo.io"
+
     # CORS (comma separated string in env; use the cors_origins property for a list)
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:8080"
 

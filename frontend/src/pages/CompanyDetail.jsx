@@ -44,6 +44,7 @@ function Detail({ label, value, href }) {
 function canMatchContact(contact) {
   return (
     Boolean(contact.apollo_id) ||
+    Boolean(contact.prospeo_id) ||
     Boolean(contact.email?.trim()) ||
     Boolean(contact.linkedin_url?.trim()) ||
     Boolean(contact.full_name?.trim()) ||
@@ -61,6 +62,7 @@ export default function CompanyDetail() {
   const [tab, setTab] = useState("overview");
   const [enriching, setEnriching] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
+  const [prospeoReady, setProspeoReady] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingEdit, setSavingEdit] = useState(false);
@@ -73,13 +75,17 @@ export default function CompanyDetail() {
 
   useEffect(() => {
     api
-      .get("/apollo/status")
-      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
-      .catch(() => setApolloReady(false));
-    api
       .get("/settings/status")
-      .then((res) => setGroqReady(res.data.groq.enabled && res.data.groq.configured))
-      .catch(() => setGroqReady(false));
+      .then((res) => {
+        setApolloReady(res.data.apollo?.enabled && res.data.apollo?.configured);
+        setProspeoReady(res.data.prospeo?.enabled && res.data.prospeo?.configured);
+        setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
+      })
+      .catch(() => {
+        setApolloReady(false);
+        setProspeoReady(false);
+        setGroqReady(false);
+      });
   }, []);
 
   const load = useCallback(async () => {
@@ -171,7 +177,7 @@ export default function CompanyDetail() {
       toast.success(
         data.enrichment_status === "pending"
           ? "Contact matched. Waterfall email may arrive in a few minutes."
-          : "Contact matched via Apollo.",
+          : `Contact enriched via ${data.source === "prospeo" ? "Prospeo" : "Apollo"}.`,
       );
     } catch (err) {
       toast.error(apiError(err));
@@ -184,7 +190,7 @@ export default function CompanyDetail() {
     if (!contacts.length) return;
     if (
       !confirm(
-        `Match all ${contacts.length} contact(s) at this company via Apollo? This uses Apollo credits for each contact.`
+        `Match all ${contacts.length} contact(s) at this company? Apollo is tried first, then Prospeo. Credits apply per provider.`
       )
     ) {
       return;
@@ -245,6 +251,7 @@ export default function CompanyDetail() {
   if (!company) return <PageLoader />;
 
   const website = company.website || (company.domain ? `https://${company.domain}` : null);
+  const enrichReady = apolloReady || prospeoReady;
 
   return (
     <div className="space-y-5">
@@ -347,17 +354,17 @@ export default function CompanyDetail() {
                   <button
                     className="btn-secondary"
                     onClick={matchAllContacts}
-                    disabled={matchingAll || !apolloReady || contacts.length === 0}
+                    disabled={matchingAll || !enrichReady || contacts.length === 0}
                     title={
                       !contacts.length
                         ? "No contacts to enrich"
-                        : apolloReady
-                          ? "Match all linked contacts via Apollo people/match"
-                          : "Apollo is off — enable it in Settings"
+                        : enrichReady
+                          ? "Match all linked contacts (Apollo, then Prospeo)"
+                          : "Enable Apollo or Prospeo in Settings"
                     }
                   >
                     {matchingAll ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={18} height={18} />}
-                    Match all via Apollo
+                    Match all contacts
                   </button>
                   <button
                     className="btn-secondary"
@@ -419,10 +426,10 @@ export default function CompanyDetail() {
                                 <button
                                   className="btn-ghost px-2 py-1 text-sm"
                                   onClick={() => matchContact(ct.id)}
-                                  disabled={matchingId === ct.id || !apolloReady || !canMatchContact(ct)}
+                                  disabled={matchingId === ct.id || !enrichReady || !canMatchContact(ct)}
                                   title={
-                                    !apolloReady
-                                      ? "Apollo is off"
+                                    !enrichReady
+                                      ? "Enable Apollo or Prospeo in Settings"
                                       : !canMatchContact(ct)
                                         ? "Add email, name, or LinkedIn to match"
                                         : "Match via Apollo people/match"

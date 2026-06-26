@@ -22,7 +22,7 @@ from app.schemas.contact import (
     ContactOut,
     ContactUpdate,
 )
-from app.services.contact_enrich import enrich_contact_apollo
+from app.services.contact_enrich import enrich_contact_apollo, enrich_contact_auto, enrich_contact_prospeo
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
@@ -32,7 +32,14 @@ from app.services.import_service import (
     extract_contact_row,
     parse_contact_spreadsheet,
 )
-from app.services.settings_service import build_client, get_or_create_settings, is_configured
+from app.services.settings_service import (
+    build_client,
+    build_prospeo_client,
+    get_or_create_prospeo_settings,
+    get_or_create_settings,
+    is_configured,
+    prospeo_is_configured,
+)
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_EXPORT_ROWS = 10_000
@@ -104,6 +111,31 @@ def _ensure_apollo_enabled(db: Session) -> None:
     if not is_configured(row):
         raise HTTPException(
             status_code=400, detail="No Apollo API key configured. Add one in Settings."
+        )
+
+
+def _ensure_prospeo_enabled(db: Session) -> None:
+    row = get_or_create_prospeo_settings(db)
+    if not row.enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="The Prospeo integration is off. Enable it in Settings to enrich.",
+        )
+    if not prospeo_is_configured(row):
+        raise HTTPException(
+            status_code=400, detail="No Prospeo API key configured. Add one in Settings."
+        )
+
+
+def _ensure_enrichment_enabled(db: Session) -> None:
+    apollo = get_or_create_settings(db)
+    prospeo = get_or_create_prospeo_settings(db)
+    apollo_on = apollo.enabled and is_configured(apollo)
+    prospeo_on = prospeo.enabled and prospeo_is_configured(prospeo)
+    if not apollo_on and not prospeo_on:
+        raise HTTPException(
+            status_code=400,
+            detail="No enrichment provider enabled. Configure Apollo or Prospeo in Settings.",
         )
 
 
@@ -520,7 +552,7 @@ def bulk_enrich_contacts(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
-    """Match selected contacts via Apollo people/match (sequential, max 50)."""
+    """Match selected contacts via Apollo/Prospeo (sequential, max 50)."""
     ids = list(dict.fromkeys(payload.ids))
     if not ids:
         return BulkEnrichResult()
@@ -530,8 +562,7 @@ def bulk_enrich_contacts(
             detail=f"Maximum {MAX_BULK_ENRICH} contacts per bulk enrich request.",
         )
 
-    _ensure_apollo_enabled(db)
-    client = build_client(db)
+    _ensure_enrichment_enabled(db)
 
     result = BulkEnrichResult()
     for contact_id in ids:
@@ -541,7 +572,7 @@ def bulk_enrich_contacts(
             result.errors.append(f"Contact {contact_id}: not found.")
             continue
 
-        enrich_result = enrich_contact_apollo(db, client, contact)
+        enrich_result = enrich_contact_auto(db, contact)
         if enrich_result.ok:
             if enrich_result.status == "pending":
                 result.pending += 1
@@ -685,15 +716,34 @@ def enrich_contact(contact_id: int, db: Session = Depends(get_db), _: User = Dep
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found.")
 
-    _ensure_apollo_enabled(db)
-    client = build_client(db)
-    enrich_result = enrich_contact_apollo(db, client, contact)
+    _ensure_enrichment_enabled(db)
+    enrich_result = enrich_contact_auto(db, contact)
     if not enrich_result.ok:
         db.commit()
         status = 404 if enrich_result.error and "no matching" in enrich_result.error.lower() else 400
         if enrich_result.error and "PUBLIC_BASE_URL" in enrich_result.error:
             status = 400
-        raise HTTPException(status_code=status, detail=enrich_result.error or "Apollo enrich failed.")
+        raise HTTPException(status_code=status, detail=enrich_result.error or "Enrichment failed.")
+
+    db.commit()
+    db.refresh(contact)
+    return ContactOut.model_validate(contact)
+
+
+@router.post("/{contact_id}/enrich-prospeo", response_model=ContactOut)
+def enrich_contact_prospeo_only(
+    contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_admin_user)
+):
+    contact = db.get(Contact, contact_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found.")
+
+    _ensure_prospeo_enabled(db)
+    enrich_result = enrich_contact_prospeo(db, build_prospeo_client(db), contact)
+    if not enrich_result.ok:
+        db.commit()
+        status = 404 if enrich_result.error and "no matching" in enrich_result.error.lower() else 400
+        raise HTTPException(status_code=status, detail=enrich_result.error or "Prospeo enrich failed.")
 
     db.commit()
     db.refresh(contact)

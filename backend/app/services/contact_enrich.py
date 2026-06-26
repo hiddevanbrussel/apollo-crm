@@ -1,9 +1,9 @@
-"""Apollo people/match enrichment for CRM contacts."""
+"""Contact enrichment via Apollo and Prospeo."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,9 +23,25 @@ from app.services.apollo_webhook import (
     redact_match_log_payload,
     waterfall_enrichment_enabled,
 )
+from app.services.prospeo_mapper import (
+    build_prospeo_enrich_data,
+    has_prospeo_match_criteria,
+    map_prospeo_organization,
+    map_prospeo_person,
+)
+from app.services.prospeo_service import ProspeoError, ProspeoService
+from app.services.settings_service import (
+    build_client,
+    build_prospeo_client,
+    get_or_create_prospeo_settings,
+    get_or_create_settings,
+    is_configured,
+    prospeo_is_configured,
+)
 
 PEOPLE_MATCH_ENDPOINT = "/api/v1/people/match"
 PEOPLE_SEARCH_ENDPOINT = "/api/v1/mixed_people/api_search"
+PROSPEO_ENRICH_ENDPOINT = "/enrich-person"
 
 
 @dataclass
@@ -33,10 +49,17 @@ class EnrichContactResult:
     ok: bool
     status: str = "failed"
     error: str | None = None
+    provider: str | None = None
 
 
-def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, Any]) -> None:
-    mapped = map_person(person)
+def _apply_mapped_to_contact(
+    db: Session,
+    contact: Contact,
+    mapped: dict[str, Any],
+    *,
+    external_id_field: str | None,
+    map_org: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
     org = mapped.pop("_organization", None)
     for key, value in mapped.items():
         if key == "source":
@@ -44,16 +67,16 @@ def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, An
         if value not in (None, "") and hasattr(contact, key):
             if key == "email" and value and contact.email and value.lower() == contact.email.lower():
                 continue
-            if key == "apollo_id" and value:
+            if external_id_field and key == external_id_field and value:
                 clash = db.execute(
-                    select(Contact).where(Contact.apollo_id == value)
+                    select(Contact).where(getattr(Contact, external_id_field) == value)
                 ).scalar_one_or_none()
                 if clash and clash.id != contact.id:
                     continue
             setattr(contact, key, value)
 
     if org and not contact.company_id:
-        org_fields = map_organization(org)
+        org_fields = map_org(org)
         domain = org_fields.get("domain")
         existing_company = None
         if domain:
@@ -69,6 +92,16 @@ def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, An
             db.flush()
         if existing_company:
             contact.company_id = existing_company.id
+
+
+def _apply_person_to_contact(db: Session, contact: Contact, person: dict[str, Any]) -> None:
+    _apply_mapped_to_contact(
+        db,
+        contact,
+        map_person(person),
+        external_id_field="apollo_id",
+        map_org=map_organization,
+    )
 
 
 def _match_strategy_label(payload: dict[str, Any]) -> str:
@@ -234,8 +267,13 @@ def enrich_contact_apollo(
                 )
             )
         if last_exc:
-            return EnrichContactResult(ok=False, status="failed", error=last_exc.message)
-        return EnrichContactResult(ok=False, status="failed", error="Apollo found no matching person.")
+            return EnrichContactResult(ok=False, status="failed", error=last_exc.message, provider="apollo")
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Apollo found no matching person.",
+            provider="apollo",
+        )
 
     person = response.get("person") or {}
     _apply_person_to_contact(db, contact, person)
@@ -258,6 +296,8 @@ def enrich_contact_apollo(
         contact.enrichment_status = "enriched"
         final_status = "enriched"
 
+    contact.source = "apollo"
+
     db.add(
         EnrichmentLog(
             entity_type="contact",
@@ -277,4 +317,126 @@ def enrich_contact_apollo(
                 response_status=200,
             )
         )
-    return EnrichContactResult(ok=True, status=final_status)
+    return EnrichContactResult(ok=True, status=final_status, provider="apollo")
+
+
+def enrich_contact_prospeo(
+    db: Session,
+    client: ProspeoService,
+    contact: Contact,
+    *,
+    company: Company | None = None,
+) -> EnrichContactResult:
+    """Enrich one contact via Prospeo POST /enrich-person."""
+    if company is None and contact.company_id:
+        company = db.get(Company, contact.company_id)
+
+    data = build_prospeo_enrich_data(contact, company)
+    if not has_prospeo_match_criteria(data):
+        contact.enrichment_status = "failed"
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Not enough data for Prospeo (need email, LinkedIn, or name + company).",
+            provider="prospeo",
+        )
+
+    log_data = {k: v for k, v in data.items() if k != "email"}
+    try:
+        response = client.enrich_person(data)
+    except ProspeoError as exc:
+        contact.enrichment_status = "failed"
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint=PROSPEO_ENRICH_ENDPOINT,
+                request_payload=log_data,
+                response_status=exc.status_code or 400,
+            )
+        )
+        if exc.error_code == "NO_MATCH":
+            return EnrichContactResult(
+                ok=False,
+                status="failed",
+                error="Prospeo found no matching person.",
+                provider="prospeo",
+            )
+        return EnrichContactResult(ok=False, status="failed", error=exc.message, provider="prospeo")
+
+    mapped = map_prospeo_person(response)
+    if not mapped:
+        contact.enrichment_status = "failed"
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Prospeo returned an empty person record.",
+            provider="prospeo",
+        )
+
+    _apply_mapped_to_contact(
+        db,
+        contact,
+        mapped,
+        external_id_field="prospeo_id",
+        map_org=map_prospeo_organization,
+    )
+    contact.prospeo_data = response
+    contact.enrichment_status = "enriched"
+    contact.source = "prospeo"
+
+    db.add(
+        EnrichmentLog(
+            entity_type="contact",
+            entity_id=contact.id,
+            endpoint=PROSPEO_ENRICH_ENDPOINT,
+            request_payload=log_data,
+            response_status=200,
+        )
+    )
+    return EnrichContactResult(ok=True, status="enriched", provider="prospeo")
+
+
+def enrich_contact_auto(
+    db: Session,
+    contact: Contact,
+    *,
+    company: Company | None = None,
+) -> EnrichContactResult:
+    """Try Apollo first, then Prospeo when Apollo does not match."""
+    apollo_row = get_or_create_settings(db)
+    prospeo_row = get_or_create_prospeo_settings(db)
+    apollo_on = apollo_row.enabled and is_configured(apollo_row)
+    prospeo_on = prospeo_row.enabled and prospeo_is_configured(prospeo_row)
+
+    if not apollo_on and not prospeo_on:
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="No enrichment provider enabled. Configure Apollo or Prospeo in Settings.",
+        )
+
+    apollo_result: EnrichContactResult | None = None
+    if apollo_on:
+        apollo_result = enrich_contact_apollo(db, build_client(db), contact, company=company)
+        if apollo_result.ok:
+            return apollo_result
+
+    if prospeo_on:
+        prospeo_result = enrich_contact_prospeo(
+            db, build_prospeo_client(db), contact, company=company
+        )
+        if prospeo_result.ok:
+            return prospeo_result
+        if apollo_result and not apollo_result.ok:
+            return EnrichContactResult(
+                ok=False,
+                status="failed",
+                error=f"Apollo: {apollo_result.error}. Prospeo: {prospeo_result.error}",
+                provider="prospeo",
+            )
+        return prospeo_result
+
+    return apollo_result or EnrichContactResult(
+        ok=False, status="failed", error="Enrichment failed."
+    )

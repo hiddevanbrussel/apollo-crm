@@ -18,24 +18,32 @@ from app.schemas.settings import (
     LogokitClientConfig,
     LogokitTestInput,
     LogokitTestResult,
+    ProspeoSettingsOut,
+    ProspeoSettingsUpdate,
+    ProspeoTestResult,
 )
 from app.services.logokit_service import LogokitService, validate_publishable_token
 from app.services.settings_service import (
     build_client,
     build_groq_client,
     build_logokit_client,
+    build_prospeo_client,
     get_decrypted_logokit_token,
     get_masked_api_key,
     get_masked_groq_key,
+    get_masked_prospeo_key,
     get_or_create_groq_settings,
     get_or_create_logokit_settings,
+    get_or_create_prospeo_settings,
     get_or_create_settings,
     groq_is_configured,
     is_configured,
     logokit_is_configured,
+    prospeo_is_configured,
     set_api_key,
     set_groq_key,
     set_logokit_token,
+    set_prospeo_key,
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -54,11 +62,15 @@ def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_cur
     apollo = get_or_create_settings(db)
     groq = get_or_create_groq_settings(db)
     logokit = get_or_create_logokit_settings(db)
+    prospeo = get_or_create_prospeo_settings(db)
     return IntegrationsStatusOut(
         apollo=IntegrationServiceStatus(enabled=apollo.enabled, configured=is_configured(apollo)),
         groq=IntegrationServiceStatus(enabled=groq.enabled, configured=groq_is_configured(groq)),
         logokit=IntegrationServiceStatus(
             enabled=logokit.enabled, configured=logokit_is_configured(logokit)
+        ),
+        prospeo=IntegrationServiceStatus(
+            enabled=prospeo.enabled, configured=prospeo_is_configured(prospeo)
         ),
     )
 
@@ -223,3 +235,48 @@ def test_logokit_settings(
     client = LogokitService(token=token, base_url=row.base_url)
     ok, message, status_code = client.test_connection()
     return LogokitTestResult(success=ok, message=message, status_code=status_code)
+
+
+# ---------------------------------------------------------------------------
+# Prospeo
+# ---------------------------------------------------------------------------
+def _prospeo_to_out(row) -> ProspeoSettingsOut:
+    out = ProspeoSettingsOut.model_validate(row)
+    out.configured = prospeo_is_configured(row)
+    out.api_key_masked = get_masked_prospeo_key(row)
+    return out
+
+
+@router.get("/prospeo", response_model=ProspeoSettingsOut)
+def get_prospeo_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    return _prospeo_to_out(get_or_create_prospeo_settings(db))
+
+
+@router.put("/prospeo", response_model=ProspeoSettingsOut)
+def update_prospeo_settings(
+    payload: ProspeoSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    row = get_or_create_prospeo_settings(db)
+    if payload.clear_api_key:
+        row.api_key_encrypted = None
+    elif payload.api_key:
+        set_prospeo_key(row, payload.api_key.strip())
+    if payload.base_url is not None and payload.base_url.strip():
+        row.base_url = payload.base_url.strip().rstrip("/")
+    if payload.enabled is not None:
+        row.enabled = payload.enabled
+    db.commit()
+    db.refresh(row)
+    return _prospeo_to_out(row)
+
+
+@router.post("/prospeo/test", response_model=ProspeoTestResult)
+def test_prospeo_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    row = get_or_create_prospeo_settings(db)
+    if not prospeo_is_configured(row):
+        return ProspeoTestResult(success=False, message="No Prospeo API key configured.", status_code=400)
+    client = build_prospeo_client(db)
+    ok, message, status_code = client.test_connection()
+    return ProspeoTestResult(success=ok, message=message, status_code=status_code)

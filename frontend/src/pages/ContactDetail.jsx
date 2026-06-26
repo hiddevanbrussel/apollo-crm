@@ -47,8 +47,10 @@ export default function ContactDetail() {
   const { isAdmin } = useAuth();
   const [contact, setContact] = useState(null);
   const [enriching, setEnriching] = useState(false);
+  const [enrichingProspeo, setEnrichingProspeo] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
+  const [prospeoReady, setProspeoReady] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [companies, setCompanies] = useState([]);
@@ -56,9 +58,15 @@ export default function ContactDetail() {
 
   useEffect(() => {
     api
-      .get("/apollo/status")
-      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
-      .catch(() => setApolloReady(false));
+      .get("/settings/status")
+      .then((res) => {
+        setApolloReady(res.data.apollo?.enabled && res.data.apollo?.configured);
+        setProspeoReady(res.data.prospeo?.enabled && res.data.prospeo?.configured);
+      })
+      .catch(() => {
+        setApolloReady(false);
+        setProspeoReady(false);
+      });
   }, []);
 
   const load = useCallback(async () => {
@@ -80,15 +88,29 @@ export default function ContactDetail() {
     try {
       const { data } = await api.post(`/contacts/${id}/enrich`);
       setContact(data);
+      const provider = data.source === "prospeo" ? "Prospeo" : "Apollo";
       toast.success(
         data.enrichment_status === "pending"
           ? "Contact matched. Waterfall email enrichment is in progress — results arrive in a few minutes."
-          : "Contact matched and enriched via Apollo.",
+          : `Contact enriched via ${provider}.`,
       );
     } catch (err) {
       toast.error(apiError(err));
     } finally {
       setEnriching(false);
+    }
+  };
+
+  const enrichProspeo = async () => {
+    setEnrichingProspeo(true);
+    try {
+      const { data } = await api.post(`/contacts/${id}/enrich-prospeo`);
+      setContact(data);
+      toast.success("Contact enriched via Prospeo.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnrichingProspeo(false);
     }
   };
 
@@ -157,10 +179,12 @@ export default function ContactDetail() {
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const canMatch =
     Boolean(contact.apollo_id) ||
+    Boolean(contact.prospeo_id) ||
     Boolean(contact.email?.trim()) ||
     Boolean(contact.linkedin_url?.trim()) ||
     Boolean(contact.full_name?.trim()) ||
     Boolean(contact.first_name?.trim() && contact.last_name?.trim());
+  const enrichReady = apolloReady || prospeoReady;
   const employment = Array.isArray(contact.apollo_data?.employment_history)
     ? contact.apollo_data.employment_history
     : [];
@@ -209,19 +233,36 @@ export default function ContactDetail() {
           )}
           {isAdmin && (
           <button
+            className="btn-secondary"
+            onClick={enrichProspeo}
+            disabled={enrichingProspeo || !prospeoReady || !canMatch}
+            title={
+              !prospeoReady
+                ? "Prospeo is off — enable it in Settings"
+                : !canMatch
+                  ? "Add an email, name + company, or LinkedIn URL to enrich via Prospeo"
+                  : "Enrich via Prospeo enrich-person"
+            }
+          >
+            {enrichingProspeo ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={18} height={18} />}
+            Match via Prospeo
+          </button>
+          )}
+          {isAdmin && (
+          <button
             className="btn-primary"
             onClick={enrich}
-            disabled={enriching || !apolloReady || !canMatch}
+            disabled={enriching || !enrichReady || !canMatch}
             title={
-              !apolloReady
-                ? "Apollo is off — enable it in Settings"
+              !enrichReady
+                ? "Enable Apollo or Prospeo in Settings"
                 : !canMatch
-                  ? "Add an email, name, or LinkedIn URL to match via Apollo"
-                  : "Match via Apollo people/match using name, email, company domain, LinkedIn…"
+                  ? "Add an email, name, or LinkedIn URL to match"
+                  : "Try Apollo first, then Prospeo if no match is found"
             }
           >
             {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Sparkles width={18} height={18} />}
-            Match via Apollo
+            Match contact
           </button>
           )}
         </div>
@@ -240,6 +281,7 @@ export default function ContactDetail() {
             <Detail label="City" value={contact.city} />
             <Detail label="Country" value={contact.country} />
             <Detail label="Apollo ID" value={contact.apollo_id} />
+            <Detail label="Prospeo ID" value={contact.prospeo_id} />
             <div className="sm:col-span-2">
               <Detail label="Headline" value={contact.headline} />
             </div>

@@ -29,10 +29,13 @@ class Contact(Base):
     seniority: Mapped[str | None] = mapped_column(String(120), nullable=True)
     department: Mapped[str | None] = mapped_column(String(120), nullable=True)
     apollo_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True, nullable=True)
+    prospeo_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual", nullable=False)
     enrichment_status: Mapped[str] = mapped_column(String(50), default="none", nullable=False)
     # Full raw Apollo payload (search result merged with complete person info).
     apollo_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    # Full raw Prospeo enrich-person response.
+    prospeo_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
