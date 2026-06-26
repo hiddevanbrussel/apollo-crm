@@ -59,54 +59,19 @@ def _normalize_website(value: str | None) -> str | None:
 def build_prospeo_search_filters(
     contact: Any,
     company: Any | None = None,
-    *,
-    include_company_website: bool = True,
-    include_company_name: bool = True,
 ) -> dict[str, Any] | None:
-    """Build Prospeo search-person filters (person_name + optional company)."""
+    """Build Prospeo search-person filters (person_name only for now)."""
     first, last, full = _contact_name_parts(contact)
     person_name = full or " ".join(p for p in [first, last] if p)
     if not person_name:
         return None
-
-    filters: dict[str, Any] = {"person_name": {"include": [person_name]}}
-    domain, org_name = _contact_org_context(contact, company)
-    company_block: dict[str, Any] = {}
-    if include_company_website and domain:
-        website = _normalize_website(domain)
-        if website:
-            company_block["websites"] = {"include": [website]}
-    if include_company_name and org_name:
-        company_block["names"] = {"include": [org_name.strip()]}
-    if company_block:
-        filters["company"] = company_block
-    return filters
+    return {"person_name": {"include": [person_name]}}
 
 
 def build_prospeo_search_attempts(contact: Any, company: Any | None = None) -> list[dict[str, Any]]:
-    """Ordered search-person filter payloads: name+website+company → name only."""
-    domain, org_name = _contact_org_context(contact, company)
-    attempts: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    def add(**kwargs: bool) -> None:
-        payload = build_prospeo_search_filters(contact, company, **kwargs)
-        if not payload:
-            return
-        key = str(sorted(payload.items()))
-        if key in seen:
-            return
-        seen.add(key)
-        attempts.append(payload)
-
-    if domain and org_name:
-        add(include_company_website=True, include_company_name=True)
-    if domain:
-        add(include_company_website=True, include_company_name=False)
-    if org_name:
-        add(include_company_website=False, include_company_name=True)
-    add(include_company_website=False, include_company_name=False)
-    return attempts
+    """Search-person filter payloads — currently person_name only."""
+    payload = build_prospeo_search_filters(contact, company)
+    return [payload] if payload else []
 
 
 def has_prospeo_search_criteria(contact: Any, company: Any | None = None) -> bool:
