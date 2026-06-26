@@ -106,6 +106,12 @@ class BulkEnrichResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class BulkEnrichFilteredResult(BulkEnrichResult):
+    total_matched: int = 0
+    processed: int = 0
+    remaining: int = 0
+
+
 class ContactImportResult(BaseModel):
     total_rows: int
     created: int

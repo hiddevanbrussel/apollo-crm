@@ -117,7 +117,7 @@ export default function Contacts() {
     tiers: [],
     companies: [],
   });
-  const [apolloReady, setApolloReady] = useState(false);
+  const [enrichReady, setEnrichReady] = useState(false);
   const [showFilters, setShowFilters] = useState(true);
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -127,6 +127,7 @@ export default function Contacts() {
   const [deletingAll, setDeletingAll] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [enrichingSelected, setEnrichingSelected] = useState(false);
+  const [enrichingUnenriched, setEnrichingUnenriched] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [exporting, setExporting] = useState(false);
   const [savedPresets, setSavedPresets] = useState([]);
@@ -147,9 +148,15 @@ export default function Contacts() {
 
   useEffect(() => {
     api
-      .get("/apollo/status")
-      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
-      .catch(() => setApolloReady(false));
+      .get("/settings/status")
+      .then((res) => {
+        const apollo = res.data.apollo?.enabled && res.data.apollo?.configured;
+        const prospeo = res.data.prospeo?.enabled && res.data.prospeo?.configured;
+        setEnrichReady(apollo || prospeo);
+      })
+      .catch(() => {
+        setEnrichReady(false);
+      });
   }, []);
 
   const load = useCallback(async () => {
@@ -355,7 +362,7 @@ export default function Contacts() {
     }
     if (
       !confirm(
-        `Match ${ids.length} selected contact(s) via Apollo? This uses Apollo credits for each contact.`
+        `Match ${ids.length} selected contact(s)? This uses enrichment credits for each contact.`
       )
     ) {
       return;
@@ -381,6 +388,63 @@ export default function Contacts() {
     }
   };
 
+  const enrichUnenriched = async () => {
+    setEnrichingUnenriched(true);
+    try {
+      const qs = contactQueryParams({ search, filters });
+      qs.set("limit", "0");
+      const { data: preview } = await api.post(`/contacts/bulk-enrich-unenriched?${qs.toString()}`);
+      if (!preview.total_matched) {
+        toast.info("No contacts to enrich for the current filters.");
+        return;
+      }
+      if (
+        !confirm(
+          `Match ${preview.total_matched} contact(s) that are not enriched yet? This runs in batches of 50 and uses enrichment credits.`
+        )
+      ) {
+        return;
+      }
+
+      qs.delete("limit");
+      const totals = { enriched: 0, pending: 0, failed: 0, skipped: 0 };
+      const errors = [];
+      let remaining = preview.total_matched;
+      let batches = 0;
+      const maxBatches = 500;
+
+      while (remaining > 0 && batches < maxBatches) {
+        const { data: res } = await api.post(`/contacts/bulk-enrich-unenriched?${qs.toString()}`);
+        batches += 1;
+        totals.enriched += res.enriched;
+        totals.pending += res.pending;
+        totals.failed += res.failed;
+        totals.skipped += res.skipped;
+        if (res.errors?.length) errors.push(...res.errors);
+        if (res.processed === 0) break;
+        if (res.enriched === 0 && res.pending === 0 && res.failed === res.processed) {
+          toast.info(`Stopped: ${res.remaining} contact(s) could not be matched.`);
+          remaining = res.remaining;
+          break;
+        }
+        remaining = res.remaining;
+      }
+
+      const parts = [];
+      if (totals.enriched) parts.push(`${totals.enriched} enriched`);
+      if (totals.pending) parts.push(`${totals.pending} pending`);
+      if (totals.failed) parts.push(`${totals.failed} failed`);
+      if (totals.skipped) parts.push(`${totals.skipped} skipped`);
+      toast.success(parts.length ? parts.join(", ") : "Bulk match completed.");
+      if (errors.length) toast.info(errors.slice(0, 3).join(" · "));
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnrichingUnenriched(false);
+    }
+  };
+
   const pageIds = data?.items?.map((c) => c.id) || [];
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
   const someOnPageSelected = pageIds.some((id) => selectedIds.has(id));
@@ -400,6 +464,25 @@ export default function Contacts() {
             {exporting ? <Spinner className="h-4 w-4" /> : <Icon.Download width={18} height={18} />}
             Export
           </button>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={enrichUnenriched}
+              disabled={enrichingUnenriched || !enrichReady || loading}
+              title={
+                enrichReady
+                  ? "Match all not-enriched contacts (respects current filters)"
+                  : "Enable Apollo or Prospeo in Settings"
+              }
+            >
+              {enrichingUnenriched ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                <Icon.Sparkles width={18} height={18} />
+              )}
+              Match unenriched
+            </button>
+          )}
           <button
             className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
             onClick={deleteAll}
@@ -424,15 +507,15 @@ export default function Contacts() {
               <button
                 className="btn-primary"
                 onClick={enrichSelected}
-                disabled={enrichingSelected || !apolloReady}
-                title={apolloReady ? "Match selected contacts via Apollo" : "Apollo is off — enable it in Settings"}
+                disabled={enrichingSelected || !enrichReady}
+                title={enrichReady ? "Match selected contacts" : "Enable Apollo or Prospeo in Settings"}
               >
                 {enrichingSelected ? (
                   <Spinner className="h-4 w-4 border-white/40 border-t-white" />
                 ) : (
                   <Icon.Sparkles width={18} height={18} />
                 )}
-                Match via Apollo
+                Match selected
               </button>
             )}
             <button className="btn-secondary" onClick={() => setSelectedIds(new Set())}>

@@ -14,6 +14,7 @@ from app.schemas.contact import (
     BulkDeleteResult,
     BulkEnrichRequest,
     BulkEnrichResult,
+    BulkEnrichFilteredResult,
     ContactCompanyOption,
     ContactCreate,
     ContactFilterOptions,
@@ -50,6 +51,7 @@ MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_EXPORT_ROWS = 10_000
 MAX_BULK_ENRICH = 50
 TITLE_FILTER_NONE = "__no_title__"
+UNENRICHED_CONTACT_STATUSES = ("none", "failed")
 
 
 def _contact_has_no_title():
@@ -116,6 +118,57 @@ def _apply_contact_filters(
             func.lower(Company.tier) == tier.lower()
         )
     return stmt
+
+
+def _unenriched_contacts_stmt(
+    *,
+    search: str | None = None,
+    company_id: int | None = None,
+    source: str | None = None,
+    enrichment_status: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    seniority: str | None = None,
+    department: str | None = None,
+    title: str | None = None,
+    titles: list[str] | None = None,
+    tier: str | None = None,
+):
+    stmt = _apply_contact_filters(
+        select(Contact),
+        search=search,
+        company_id=company_id,
+        source=source,
+        enrichment_status=enrichment_status,
+        country=country,
+        city=city,
+        seniority=seniority,
+        department=department,
+        title=title,
+        titles=titles,
+        tier=tier,
+    )
+    if enrichment_status:
+        if enrichment_status in {"enriched", "pending"}:
+            return stmt.where(Contact.id == -1)
+        return stmt
+    return stmt.where(Contact.enrichment_status.in_(UNENRICHED_CONTACT_STATUSES))
+
+
+def _run_bulk_enrich(db: Session, contacts: list[Contact]) -> BulkEnrichResult:
+    result = BulkEnrichResult()
+    for contact in contacts:
+        enrich_result = enrich_contact_auto(db, contact)
+        if enrich_result.ok:
+            if enrich_result.status == "pending":
+                result.pending += 1
+            else:
+                result.enriched += 1
+        else:
+            result.failed += 1
+            label = contact.full_name or contact.email or f"#{contact.id}"
+            result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
+    return result
 
 
 def _ensure_apollo_enabled(db: Session) -> None:
@@ -581,27 +634,79 @@ def bulk_enrich_contacts(
 
     _ensure_enrichment_enabled(db)
 
+    contacts = [db.get(Contact, contact_id) for contact_id in ids]
     result = BulkEnrichResult()
-    for contact_id in ids:
-        contact = db.get(Contact, contact_id)
+    to_enrich: list[Contact] = []
+    for contact_id, contact in zip(ids, contacts):
         if not contact:
             result.skipped += 1
             result.errors.append(f"Contact {contact_id}: not found.")
             continue
+        to_enrich.append(contact)
 
-        enrich_result = enrich_contact_auto(db, contact)
-        if enrich_result.ok:
-            if enrich_result.status == "pending":
-                result.pending += 1
-            else:
-                result.enriched += 1
-        else:
-            result.failed += 1
-            label = contact.full_name or contact.email or f"#{contact.id}"
-            result.errors.append(f"{label}: {enrich_result.error or 'match failed'}")
-
+    batch_result = _run_bulk_enrich(db, to_enrich)
     db.commit()
-    return result
+    return batch_result
+
+
+@router.post("/bulk-enrich-unenriched", response_model=BulkEnrichFilteredResult)
+def bulk_enrich_unenriched_contacts(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+    search: str | None = Query(default=None, description="Search name/title/email"),
+    company_id: int | None = None,
+    source: str | None = None,
+    enrichment_status: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    seniority: str | None = None,
+    department: str | None = None,
+    title: str | None = None,
+    titles: list[str] | None = Query(default=None),
+    tier: str | None = None,
+    limit: int = Query(default=MAX_BULK_ENRICH, ge=0, le=MAX_BULK_ENRICH),
+):
+    """Match not-yet-enriched contacts matching filters (batch of up to 50).
+
+    Without an enrichment_status filter, targets contacts with status ``none`` or ``failed``.
+    Pass ``limit=0`` to return only how many contacts would match.
+    """
+    _ensure_enrichment_enabled(db)
+
+    base_stmt = _unenriched_contacts_stmt(
+        search=search,
+        company_id=company_id,
+        source=source,
+        enrichment_status=enrichment_status,
+        country=country,
+        city=city,
+        seniority=seniority,
+        department=department,
+        title=title,
+        titles=titles,
+        tier=tier,
+    )
+    total_matched = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
+    if limit == 0 or total_matched == 0:
+        return BulkEnrichFilteredResult(total_matched=total_matched, remaining=total_matched)
+
+    contacts = db.scalars(
+        base_stmt.order_by(Contact.updated_at.asc(), Contact.id.asc()).limit(limit)
+    ).all()
+    batch_result = _run_bulk_enrich(db, contacts)
+    db.commit()
+
+    remaining = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
+    return BulkEnrichFilteredResult(
+        enriched=batch_result.enriched,
+        pending=batch_result.pending,
+        failed=batch_result.failed,
+        skipped=batch_result.skipped,
+        errors=batch_result.errors,
+        total_matched=total_matched,
+        processed=len(contacts),
+        remaining=remaining,
+    )
 
 
 @router.delete("/all", response_model=BulkDeleteResult)
