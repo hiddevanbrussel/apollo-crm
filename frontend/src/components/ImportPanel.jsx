@@ -12,11 +12,14 @@ function ImportResultSummary({ result, type }) {
         <span className="text-green-700">
           Created: <strong>{result.created}</strong>
         </span>
-        <span className="text-brand-700">
-          Updated: <strong>{result.updated}</strong>
-        </span>
+        {type === "companies" && (
+          <span className="text-brand-700">
+            Updated: <strong>{result.updated}</strong>
+          </span>
+        )}
         <span className="text-ink-500">
-          Skipped: <strong>{result.skipped_duplicates}</strong>
+          {type === "contacts" ? "Skipped (existing)" : "Skipped"}:{" "}
+          <strong>{result.skipped_duplicates}</strong>
         </span>
         {type === "companies" && result.enriched > 0 && (
           <span className="text-purple-700">
@@ -171,7 +174,12 @@ export function ContactImportPanel() {
       fd.append("file", file);
       const { data } = await api.post("/contacts/import", fd);
       setResult(data);
-      toast.success(`${data.created} created, ${data.updated} updated.`);
+      toast.success(
+        `${data.created} created` +
+          (data.skipped_duplicates ? `, ${data.skipped_duplicates} skipped (already exist)` : "") +
+          (data.skipped_apollo ? `, ${data.skipped_apollo} skipped (Apollo)` : "") +
+          "."
+      );
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -195,6 +203,7 @@ export function ContactImportPanel() {
         Required: <code className="rounded bg-white px-1 text-xs">customer_name</code> (must match a company name)
         plus at least one of first_name, last_name, full_name or email. Email domains are added to the company
         automatically (multiple domains per company). Contacts get source <strong>IMPORT</strong>.
+        Existing contacts are never overwritten — duplicates are skipped.
       </div>
 
       <div

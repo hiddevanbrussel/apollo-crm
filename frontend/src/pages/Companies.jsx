@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { FilterSearchSelect } from "../components/FilterSearch";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -406,12 +407,13 @@ export default function Companies() {
             </div>
             <div className="divide-y divide-ink-100">
               <FilterSection title="Industry" icon={Icon.Building} active={!!filters.industry} defaultOpen={!!filters.industry}>
-                <select className="input" value={filters.industry} onChange={(e) => setFilter("industry", e.target.value)}>
-                  <option value="">All industries</option>
-                  {filterOptions.industries.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                </select>
+                <FilterSearchSelect
+                  value={filters.industry}
+                  onChange={(v) => setFilter("industry", v)}
+                  options={filterOptions.industries}
+                  allLabel="All industries"
+                  placeholder="Search industries…"
+                />
               </FilterSection>
               <FilterSection title="# Employees" icon={Icon.Users} active={!!filters.employees} defaultOpen={!!filters.employees}>
                 <select className="input" value={filters.employees} onChange={(e) => setFilter("employees", e.target.value)}>
@@ -422,40 +424,44 @@ export default function Companies() {
                 </select>
               </FilterSection>
               <FilterSection title="Tier" icon={Icon.Sparkles} active={!!filters.tier} defaultOpen={!!filters.tier}>
-                <select className="input" value={filters.tier} onChange={(e) => setFilter("tier", e.target.value)}>
-                  <option value="">All tiers</option>
-                  {filterOptions.tiers.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                </select>
+                <FilterSearchSelect
+                  value={filters.tier}
+                  onChange={(v) => setFilter("tier", v)}
+                  options={filterOptions.tiers}
+                  allLabel="All tiers"
+                  placeholder="Search tiers…"
+                />
               </FilterSection>
               <FilterSection title="Market Segments" icon={Icon.Filter} active={!!filters.market_segment} defaultOpen={!!filters.market_segment}>
-                <select className="input" value={filters.market_segment} onChange={(e) => setFilter("market_segment", e.target.value)}>
-                  <option value="">All segments</option>
-                  {filterOptions.segments.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                </select>
+                <FilterSearchSelect
+                  value={filters.market_segment}
+                  onChange={(v) => setFilter("market_segment", v)}
+                  options={filterOptions.segments}
+                  allLabel="All segments"
+                  placeholder="Search segments…"
+                />
               </FilterSection>
               <FilterSection title="Account Location" icon={Icon.Globe} active={!!filters.country || !!filters.city} defaultOpen={!!filters.country || !!filters.city}>
                 <div className="space-y-3">
                   <div>
                     <p className="mb-1 text-xs font-medium text-ink-400">Country</p>
-                    <select className="input" value={filters.country} onChange={(e) => setFilter("country", e.target.value)}>
-                      <option value="">All countries</option>
-                      {filterOptions.countries.map((v) => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                    <FilterSearchSelect
+                      value={filters.country}
+                      onChange={(v) => setFilter("country", v)}
+                      options={filterOptions.countries}
+                      allLabel="All countries"
+                      placeholder="Search countries…"
+                    />
                   </div>
                   <div>
                     <p className="mb-1 text-xs font-medium text-ink-400">City</p>
-                    <select className="input" value={filters.city} onChange={(e) => setFilter("city", e.target.value)}>
-                      <option value="">All cities</option>
-                      {filterOptions.cities.map((v) => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                    <FilterSearchSelect
+                      value={filters.city}
+                      onChange={(v) => setFilter("city", v)}
+                      options={filterOptions.cities}
+                      allLabel="All cities"
+                      placeholder="Search cities…"
+                    />
                   </div>
                 </div>
               </FilterSection>

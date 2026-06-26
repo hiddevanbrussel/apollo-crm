@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
 import { EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { FilterSearchCheckList, FilterSearchSelect } from "../components/FilterSearch";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -770,20 +771,22 @@ export default function Contacts() {
               </div>
               <div className="divide-y divide-ink-100">
                 <FilterSection title="Company" icon={Icon.Building} active={!!filters.company_id} defaultOpen={!!filters.company_id}>
-                  <select className="input" value={filters.company_id} onChange={(e) => setFilter("company_id", e.target.value)}>
-                    <option value="">All companies</option>
-                    {filterOptions.companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
+                  <FilterSearchSelect
+                    value={filters.company_id}
+                    onChange={(v) => setFilter("company_id", v)}
+                    options={filterOptions.companies.map((c) => ({ value: String(c.id), label: c.name }))}
+                    allLabel="All companies"
+                    placeholder="Search companies…"
+                  />
                 </FilterSection>
                 <FilterSection title="Company tier" icon={Icon.Sparkles} active={!!filters.tier} defaultOpen={!!filters.tier}>
-                  <select className="input" value={filters.tier} onChange={(e) => setFilter("tier", e.target.value)}>
-                    <option value="">All tiers</option>
-                    {filterOptions.tiers.map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
-                  </select>
+                  <FilterSearchSelect
+                    value={filters.tier}
+                    onChange={(v) => setFilter("tier", v)}
+                    options={filterOptions.tiers}
+                    allLabel="All tiers"
+                    placeholder="Search tiers…"
+                  />
                   <p className="mt-1.5 text-xs text-ink-400">
                     Shows contacts linked to companies with this tier.
                   </p>
@@ -809,21 +812,23 @@ export default function Contacts() {
                   <div className="space-y-3">
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Country</p>
-                      <select className="input" value={filters.country} onChange={(e) => setFilter("country", e.target.value)}>
-                        <option value="">All countries</option>
-                        {filterOptions.countries.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <FilterSearchSelect
+                        value={filters.country}
+                        onChange={(v) => setFilter("country", v)}
+                        options={filterOptions.countries}
+                        allLabel="All countries"
+                        placeholder="Search countries…"
+                      />
                     </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">City</p>
-                      <select className="input" value={filters.city} onChange={(e) => setFilter("city", e.target.value)}>
-                        <option value="">All cities</option>
-                        {filterOptions.cities.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <FilterSearchSelect
+                        value={filters.city}
+                        onChange={(v) => setFilter("city", v)}
+                        options={filterOptions.cities}
+                        allLabel="All cities"
+                        placeholder="Search cities…"
+                      />
                     </div>
                   </div>
                 </FilterSection>
@@ -842,50 +847,34 @@ export default function Contacts() {
                           </button>
                         )}
                       </div>
-                      <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-ink-100 p-2">
-                        <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm text-ink-700 hover:bg-ink-50">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 h-4 w-4 rounded border-ink-300"
-                            checked={filters.titles.includes(NO_TITLE_FILTER)}
-                            onChange={() => toggleTitle(NO_TITLE_FILTER)}
-                          />
-                          <span className="leading-snug text-ink-500 italic">No title</span>
-                        </label>
-                        {filterOptions.titles.length === 0 ? (
-                          <p className="px-1 py-1 text-xs text-ink-400">No titled contacts yet.</p>
-                        ) : (
-                          filterOptions.titles.map((v) => (
-                            <label key={v} className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-sm text-ink-700 hover:bg-ink-50">
-                              <input
-                                type="checkbox"
-                                className="mt-0.5 h-4 w-4 rounded border-ink-300"
-                                checked={filters.titles.includes(v)}
-                                onChange={() => toggleTitle(v)}
-                              />
-                              <span className="leading-snug">{v}</span>
-                            </label>
-                          ))
-                        )}
-                      </div>
+                      <FilterSearchCheckList
+                        options={filterOptions.titles}
+                        selected={filters.titles}
+                        onToggle={toggleTitle}
+                        pinnedItems={[{ value: NO_TITLE_FILTER, label: "No title", muted: true }]}
+                        placeholder="Search titles…"
+                        emptyLabel="No titled contacts yet."
+                      />
                     </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Seniority</p>
-                      <select className="input" value={filters.seniority} onChange={(e) => setFilter("seniority", e.target.value)}>
-                        <option value="">All</option>
-                        {filterOptions.seniorities.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <FilterSearchSelect
+                        value={filters.seniority}
+                        onChange={(v) => setFilter("seniority", v)}
+                        options={filterOptions.seniorities}
+                        allLabel="All"
+                        placeholder="Search seniority…"
+                      />
                     </div>
                     <div>
                       <p className="mb-1 text-xs font-medium text-ink-400">Department</p>
-                      <select className="input" value={filters.department} onChange={(e) => setFilter("department", e.target.value)}>
-                        <option value="">All</option>
-                        {filterOptions.departments.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
+                      <FilterSearchSelect
+                        value={filters.department}
+                        onChange={(v) => setFilter("department", v)}
+                        options={filterOptions.departments}
+                        allLabel="All"
+                        placeholder="Search departments…"
+                      />
                     </div>
                   </div>
                 </FilterSection>

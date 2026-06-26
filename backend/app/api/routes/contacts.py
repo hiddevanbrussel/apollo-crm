@@ -527,7 +527,8 @@ async def import_contacts(
     Required: ``customer_name`` (must match a company imported earlier) plus at least
     one of ``first_name``, ``last_name``, ``full_name`` or ``email``.
     Imported contacts are stored with ``source=import`` so they are distinguishable
-    from Apollo-discovered people.
+    from Apollo-discovered people. Existing contacts (matched by email or name + company)
+    are skipped and never overwritten.
     """
     content = await file.read()
     if not content:
@@ -611,32 +612,6 @@ async def import_contacts(
         if existing:
             if existing.source == "apollo":
                 skipped_apollo += 1
-                continue
-            changed = False
-            for key, value in contact_fields.items():
-                if key in {"full_name", "first_name", "last_name", "email"} and value:
-                    if getattr(existing, key) != value:
-                        setattr(existing, key, value)
-                        changed = True
-                elif value and not getattr(existing, key):
-                    setattr(existing, key, value)
-                    changed = True
-            if existing.company_id != company.id:
-                existing.company_id = company.id
-                changed = True
-            if extra:
-                merged = dict(existing.apollo_data or {})
-                merged_extra = dict(merged.get("import_extra") or {})
-                merged_extra.update(extra)
-                if merged_extra != merged.get("import_extra"):
-                    merged["import_extra"] = merged_extra
-                    existing.apollo_data = merged
-                    changed = True
-            if existing.source != "import":
-                existing.source = "import"
-                changed = True
-            if changed:
-                updated += 1
             else:
                 skipped += 1
             continue
