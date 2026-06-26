@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
-import { CompanyLogo, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, DomainTags, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -250,7 +250,12 @@ export default function CompanyDetail() {
         <div className="p-5">
           {tab === "overview" && (
             <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
-              <Detail label="Domain" value={company.domain} />
+              <div className="py-2.5 sm:col-span-2 lg:col-span-3">
+                <dt className="text-xs font-medium text-ink-400">Domains</dt>
+                <dd className="mt-1.5">
+                  <DomainTags domains={company.domains} primary={company.domain} />
+                </dd>
+              </div>
               <Detail label="Website" value={website} href={website} />
               <Detail label="LinkedIn" value={company.linkedin_url} href={company.linkedin_url} />
               <Detail label="Industry" value={company.industry} />

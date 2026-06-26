@@ -99,6 +99,34 @@ export function SourceBadge({ source }) {
   );
 }
 
+export function DomainTags({ domains, primary, className = "" }) {
+  const all = domains?.length
+    ? domains
+    : primary
+      ? [primary]
+      : [];
+  if (!all.length) {
+    return <span className="text-xs text-ink-400">—</span>;
+  }
+  return (
+    <div className={`flex flex-wrap gap-1 ${className}`}>
+      {all.map((d) => (
+        <span
+          key={d}
+          className={`inline-flex items-center rounded-md px-2 py-0.5 font-mono text-xs ${
+            d === primary
+              ? "border border-brand-200 bg-brand-50 text-brand-700"
+              : "border border-ink-200 bg-ink-50 text-ink-600"
+          }`}
+          title={d === primary ? "Primary domain" : "Additional domain"}
+        >
+          {d}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function EmptyState({ title, description, action }) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">

@@ -3,10 +3,12 @@ import api, { apiError } from "../api/client";
 import { resetLogokit } from "../api/logokit";
 import { Icon } from "../components/icons";
 import { Field, Modal, PageLoader, Spinner } from "../components/ui";
+import { CompanyImportPanel, ContactImportPanel } from "../components/ImportPanel";
 import { useToast } from "../context/ToastContext";
 
 const SUB_TABS = [
   { id: "integrations", label: "Integrations" },
+  { id: "import", label: "Import" },
   { id: "about", label: "About" },
 ];
 
@@ -90,6 +92,7 @@ export default function Settings() {
   const [logokitSaving, setLogokitSaving] = useState(false);
   const [logokitTesting, setLogokitTesting] = useState(false);
   const [logokitTest, setLogokitTest] = useState(null);
+  const [apolloReady, setApolloReady] = useState(false);
 
   const load = async () => {
     try {
@@ -116,6 +119,10 @@ export default function Settings() {
       .get("/companies/find-domains/jobs/active")
       .then((r) => r.data && setDomainJob(r.data))
       .catch(() => {});
+    api
+      .get("/apollo/status")
+      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
+      .catch(() => setApolloReady(false));
   }, []);
 
   // Poll a running domain job for progress.
@@ -398,6 +405,21 @@ export default function Settings() {
                 setDetail("logokit");
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {tab === "import" && (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-base font-semibold text-ink-900">Data import</h2>
+            <p className="text-sm text-ink-500">
+              Import companies first, then contacts. Contact email domains are linked to their company automatically.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <CompanyImportPanel apolloReady={apolloReady} />
+            <ContactImportPanel />
           </div>
         </div>
       )}

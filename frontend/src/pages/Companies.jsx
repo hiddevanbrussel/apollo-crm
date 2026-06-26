@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, DomainTags, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -56,17 +56,11 @@ export default function Companies() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [importFile, setImportFile] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const [enrichOnImport, setEnrichOnImport] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [apolloReady, setApolloReady] = useState(false);
   const [bulkEnriching, setBulkEnriching] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
-  const fileInputRef = useRef(null);
   const pageSize = 20;
 
   useEffect(() => {
@@ -228,38 +222,6 @@ export default function Companies() {
     }
   };
 
-  const openImport = () => {
-    setImportResult(null);
-    setImportFile(null);
-    setEnrichOnImport(false);
-    setShowImport(true);
-  };
-
-  const runImport = async () => {
-    if (!importFile) {
-      toast.info("Please select a file first.");
-      return;
-    }
-    setImporting(true);
-    setImportResult(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", importFile);
-      fd.append("enrich", enrichOnImport ? "true" : "false");
-      const { data } = await api.post("/companies/import", fd);
-      setImportResult(data);
-      toast.success(
-        `${data.created} created, ${data.updated} updated${data.enriched ? `, ${data.enriched} enriched` : ""}.`
-      );
-      setPage(1);
-      load();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setImporting(false);
-    }
-  };
-
   const remove = async (id) => {
     if (!confirm("Delete this company?")) return;
     try {
@@ -286,9 +248,6 @@ export default function Companies() {
           >
             {deletingAll ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
             Delete all
-          </button>
-          <button className="btn-secondary" onClick={openImport}>
-            <Icon.Upload width={18} height={18} /> Import
           </button>
           <button className="btn-primary" onClick={() => setShowCreate(true)}>
             <Icon.Plus width={18} height={18} /> New company
@@ -404,7 +363,9 @@ export default function Companies() {
                           <Link to={`/companies/${c.id}`} className="font-medium text-ink-900 hover:text-brand-600">
                             {c.name}
                           </Link>
-                          <p className="text-xs text-ink-400">{c.domain || "—"}</p>
+                          <p className="mt-1">
+                            <DomainTags domains={c.domains} primary={c.domain} />
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -530,97 +491,6 @@ export default function Companies() {
             <Field label="Description"><textarea className="input" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
           </div>
         </form>
-      </Modal>
-
-      <Modal
-        open={showImport}
-        onClose={() => setShowImport(false)}
-        title="Import companies"
-        footer={
-          <>
-            <button className="btn-secondary" onClick={() => setShowImport(false)}>Close</button>
-            <button className="btn-primary" onClick={runImport} disabled={importing || !importFile}>
-              {importing && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Import
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div className="rounded-lg border border-ink-100 bg-ink-50/60 p-4 text-sm text-ink-600">
-            Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file. Required column:{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">customer_name</code>.
-            Also recognized: <code className="rounded bg-white px-1.5 py-0.5 text-xs">Country</code>,{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">domain</code>.
-            Columns such as Tier, Sector, Revenue 2025, Tier Reason, Sector_confidence and
-            Partner_status are stored as extra data. Existing companies (same name or domain) are
-            <strong> updated</strong> instead of duplicated.
-          </div>
-
-          <div
-            className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-ink-200 px-6 py-10 text-center hover:border-brand-300 hover:bg-brand-50/30"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Icon.Upload width={28} height={28} className="text-ink-400" />
-            <p className="mt-2 text-sm font-medium text-ink-800">
-              {importFile ? importFile.name : "Click to choose a file"}
-            </p>
-            <p className="mt-0.5 text-xs text-ink-400">.xlsx or .csv, max 5 MB</p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xlsm,.csv"
-              className="hidden"
-              onChange={(e) => {
-                setImportFile(e.target.files?.[0] || null);
-                setImportResult(null);
-              }}
-            />
-          </div>
-
-          {isAdmin && (
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-100 p-3 hover:bg-ink-50/60">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 rounded border-ink-300"
-              checked={enrichOnImport}
-              onChange={(e) => setEnrichOnImport(e.target.checked)}
-            />
-            <span className="text-sm text-ink-700">
-              Enrich via Apollo right after import
-              <span className="block text-xs text-ink-400">
-                Fetches industry, employee count and revenue for each company with a domain.
-                <strong> Uses Apollo credits.</strong> Apollo must be enabled in Settings.
-              </span>
-            </span>
-          </label>
-          )}
-
-          {importResult && (
-            <div className="space-y-2 rounded-lg border border-ink-100 p-4">
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span className="text-green-700">Created: <strong>{importResult.created}</strong></span>
-                <span className="text-brand-700">Updated: <strong>{importResult.updated}</strong></span>
-                <span className="text-ink-500">Skipped: <strong>{importResult.skipped_duplicates}</strong></span>
-                {importResult.enriched > 0 && (
-                  <span className="text-purple-700">Enriched: <strong>{importResult.enriched}</strong></span>
-                )}
-                <span className="text-ink-500">Total rows: <strong>{importResult.total_rows}</strong></span>
-              </div>
-              {importResult.extra_columns?.length > 0 && (
-                <p className="text-xs text-ink-400">
-                  Stored as extra data: {importResult.extra_columns.join(", ")}
-                </p>
-              )}
-              {importResult.errors?.length > 0 && (
-                <ul className="mt-2 max-h-32 list-disc overflow-y-auto pl-5 text-xs text-amber-700">
-                  {importResult.errors.map((err, i) => (
-                    <li key={i}>{err}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
       </Modal>
     </div>
   );

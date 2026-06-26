@@ -27,6 +27,8 @@ class Company(Base):
     enrichment_status: Mapped[str] = mapped_column(String(50), default="none", nullable=False)
     # Arbitrary extra fields preserved from imports (e.g. Tier, Sector, mcp_id).
     extra_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    # Additional domains beyond the primary ``domain`` column (stored lowercase).
+    domains: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

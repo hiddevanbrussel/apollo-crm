@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import { Icon } from "../components/icons";
@@ -20,11 +20,6 @@ export default function Contacts() {
   const [companies, setCompanies] = useState([]);
   const [saving, setSaving] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [importFile, setImportFile] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const fileInputRef = useRef(null);
   const pageSize = 20;
 
   const load = useCallback(async () => {
@@ -107,34 +102,6 @@ export default function Contacts() {
     }
   };
 
-  const openImport = () => {
-    setImportResult(null);
-    setImportFile(null);
-    setShowImport(true);
-  };
-
-  const runImport = async () => {
-    if (!importFile) {
-      toast.info("Please select a file first.");
-      return;
-    }
-    setImporting(true);
-    setImportResult(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", importFile);
-      const { data } = await api.post("/contacts/import", fd);
-      setImportResult(data);
-      toast.success(`${data.created} created, ${data.updated} updated.`);
-      setPage(1);
-      load();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setImporting(false);
-    }
-  };
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -150,9 +117,6 @@ export default function Contacts() {
           >
             {deletingAll ? <Spinner className="h-4 w-4" /> : <Icon.Trash width={18} height={18} />}
             Delete all
-          </button>
-          <button className="btn-secondary" onClick={openImport}>
-            <Icon.Upload width={18} height={18} /> Import
           </button>
           <button className="btn-primary" onClick={openCreate}>
             <Icon.Plus width={18} height={18} /> New contact
@@ -282,82 +246,6 @@ export default function Contacts() {
             </Field>
           </div>
         </form>
-      </Modal>
-
-      <Modal
-        open={showImport}
-        onClose={() => setShowImport(false)}
-        title="Import contacts"
-        footer={
-          <>
-            <button className="btn-secondary" onClick={() => setShowImport(false)}>Close</button>
-            <button className="btn-primary" onClick={runImport} disabled={importing || !importFile}>
-              {importing && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Import
-            </button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div className="rounded-lg border border-ink-100 bg-ink-50/60 p-4 text-sm text-ink-600">
-            Upload an <strong>Excel (.xlsx)</strong> or <strong>CSV</strong> file with people linked to
-            companies you imported earlier. Required column:{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">customer_name</code> (must match
-            the company name exactly). Also provide at least one of:{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">first_name</code>,{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">last_name</code>,{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">full_name</code> or{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 text-xs">email</code>.
-            Optional: title, phone, linkedin_url, city, country. Imported contacts show source{" "}
-            <strong>IMPORT</strong> (not Apollo).
-          </div>
-
-          <div
-            className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-ink-200 px-6 py-10 text-center hover:border-brand-300 hover:bg-brand-50/30"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Icon.Upload width={28} height={28} className="text-ink-400" />
-            <p className="mt-2 text-sm font-medium text-ink-800">
-              {importFile ? importFile.name : "Click to choose a file"}
-            </p>
-            <p className="mt-0.5 text-xs text-ink-400">.xlsx or .csv, max 5 MB</p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xlsm,.csv"
-              className="hidden"
-              onChange={(e) => {
-                setImportFile(e.target.files?.[0] || null);
-                setImportResult(null);
-              }}
-            />
-          </div>
-
-          {importResult && (
-            <div className="space-y-2 rounded-lg border border-ink-100 p-4">
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span className="text-green-700">Created: <strong>{importResult.created}</strong></span>
-                <span className="text-brand-700">Updated: <strong>{importResult.updated}</strong></span>
-                <span className="text-ink-500">Skipped: <strong>{importResult.skipped_duplicates}</strong></span>
-                {importResult.skipped_apollo > 0 && (
-                  <span className="text-amber-700">Skipped (Apollo): <strong>{importResult.skipped_apollo}</strong></span>
-                )}
-                <span className="text-ink-500">Total rows: <strong>{importResult.total_rows}</strong></span>
-              </div>
-              {importResult.extra_columns?.length > 0 && (
-                <p className="text-xs text-ink-400">
-                  Stored as extra data: {importResult.extra_columns.join(", ")}
-                </p>
-              )}
-              {importResult.errors?.length > 0 && (
-                <ul className="mt-2 max-h-32 list-disc overflow-y-auto pl-5 text-xs text-amber-700">
-                  {importResult.errors.map((err, i) => (
-                    <li key={i}>{err}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
       </Modal>
     </div>
   );

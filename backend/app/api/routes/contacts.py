@@ -17,6 +17,7 @@ from app.schemas.contact import (
 )
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
+from app.services.company_domains import add_domain, email_domain
 from app.services.import_service import (
     ImportParseError,
     contact_canonical_field,
@@ -163,6 +164,7 @@ async def import_contacts(
     updated = 0
     skipped = 0
     skipped_apollo = 0
+    domains_added = 0
     errors: list[str] = []
     recognized: set[str] = set()
     extra_cols: set[str] = set()
@@ -191,6 +193,15 @@ async def import_contacts(
                 f"Row {index}: company '{company_name}' not found. Import companies first."
             )
             continue
+
+        if email:
+            mail_domain = email_domain(email)
+            if mail_domain:
+                added, clash_msg = add_domain(db, company, mail_domain)
+                if added:
+                    domains_added += 1
+                elif clash_msg:
+                    errors.append(f"Row {index}: {clash_msg}")
 
         dedup_key = f"{company.id}|{(email or '').lower()}|{(full_name or '').lower()}"
         if dedup_key in seen_in_file:
@@ -290,6 +301,7 @@ async def import_contacts(
         updated=updated,
         skipped_duplicates=skipped,
         skipped_apollo=skipped_apollo,
+        domains_added=domains_added,
         errors=errors,
         recognized_columns=sorted(recognized),
         extra_columns=sorted(extra_cols),

@@ -83,6 +83,7 @@ class ContactImportResult(BaseModel):
     updated: int
     skipped_duplicates: int
     skipped_apollo: int
+    domains_added: int
     errors: list[str]
     recognized_columns: list[str]
     extra_columns: list[str]

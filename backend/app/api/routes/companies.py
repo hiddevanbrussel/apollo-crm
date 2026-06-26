@@ -27,6 +27,7 @@ from app.schemas.contact import ContactOut, FindPeopleResult
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
+from app.services.company_domains import add_domain, list_domains
 from app.services.groq_service import GroqError
 from app.services.import_service import (
     ImportParseError,
@@ -74,15 +75,8 @@ def _apply_found_domain(db: Session, company: Company, domain: str | None) -> bo
     """Set a found domain on a company if it's free. Returns True if applied."""
     if not domain:
         return False
-    if company.domain and company.domain.lower() == domain.lower():
-        return False
-    clash = db.execute(
-        select(Company).where(func.lower(Company.domain) == domain.lower())
-    ).scalar_one_or_none()
-    if clash and clash.id != company.id:
-        return False
-    company.domain = domain
-    return True
+    added, _ = add_domain(db, company, domain)
+    return added
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -116,6 +110,7 @@ def _with_contact_count(db: Session, company: Company) -> CompanyOut:
     )
     data = CompanyOut.model_validate(company)
     data.contact_count = count or 0
+    data.domains = list_domains(company)
     return data
 
 
@@ -368,14 +363,13 @@ async def import_companies(
 
         if existing:
             changed = False
-            if domain and not existing.domain:
-                clash = db.execute(
-                    select(Company).where(func.lower(Company.domain) == domain)
-                ).scalar_one_or_none()
-                if not clash or clash.id == existing.id:
-                    existing.domain = domain
+            if domain:
+                added, clash_msg = add_domain(db, existing, domain)
+                if added:
                     changed = True
                     seen_domains_in_file.add(domain)
+                elif clash_msg:
+                    extra.setdefault("import_domain", domain)
             if country and not existing.country:
                 existing.country = country
                 changed = True
@@ -394,6 +388,7 @@ async def import_companies(
                 name=name,
                 country=country,
                 domain=domain,
+                domains=[],
                 extra_data=extra,
                 source="import",
                 enrichment_status="none",

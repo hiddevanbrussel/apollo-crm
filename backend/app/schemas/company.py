@@ -44,6 +44,7 @@ class CompanyOut(CompanyBase):
     source: str
     enrichment_status: str
     extra_data: dict | None = None
+    domains: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     contact_count: int | None = None
