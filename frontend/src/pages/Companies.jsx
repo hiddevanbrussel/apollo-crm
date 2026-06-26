@@ -194,8 +194,6 @@ export default function Companies() {
     ) {
       return;
     }
-      return;
-    }
     setDeletingAll(true);
     try {
       const { data: res } = await api.delete("/companies/all");
