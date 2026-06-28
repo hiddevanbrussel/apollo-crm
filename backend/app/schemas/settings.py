@@ -128,3 +128,4 @@ class IntegrationsStatusOut(BaseModel):
     groq: IntegrationServiceStatus
     logokit: IntegrationServiceStatus
     prospeo: IntegrationServiceStatus
+    azure_ad: IntegrationServiceStatus

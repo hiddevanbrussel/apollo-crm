@@ -31,6 +31,7 @@ class UserOut(UserBase):
 
     id: int
     role: str
+    auth_provider: str = "local"
     created_at: datetime
 
 

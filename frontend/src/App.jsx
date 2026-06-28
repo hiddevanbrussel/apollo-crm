@@ -9,6 +9,7 @@ import ContactDetail from "./pages/ContactDetail";
 import Contacts from "./pages/Contacts";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
+import LoginAzureCallback from "./pages/LoginAzureCallback";
 import MarketResearch from "./pages/MarketResearch";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
@@ -31,6 +32,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/login/azure-callback" element={<LoginAzureCallback />} />
       <Route
         path="/"
         element={

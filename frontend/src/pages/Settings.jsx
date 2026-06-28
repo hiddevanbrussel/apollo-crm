@@ -105,13 +105,23 @@ export default function Settings() {
   const [prospeoTesting, setProspeoTesting] = useState(false);
   const [prospeoTest, setProspeoTest] = useState(null);
 
+  // Azure AD state
+  const [azureAd, setAzureAd] = useState(null);
+  const [azureClientId, setAzureClientId] = useState("");
+  const [azureClientSecret, setAzureClientSecret] = useState("");
+  const [azureAuthority, setAzureAuthority] = useState("");
+  const [azureRedirectUri, setAzureRedirectUri] = useState("");
+  const [azureDomainsText, setAzureDomainsText] = useState("");
+  const [azureSaving, setAzureSaving] = useState(false);
+
   const load = async () => {
     try {
-      const [{ data: a }, { data: g }, { data: l }, { data: p }] = await Promise.all([
+      const [{ data: a }, { data: g }, { data: l }, { data: p }, { data: az }] = await Promise.all([
         api.get("/settings/apollo"),
         api.get("/settings/groq"),
         api.get("/settings/logokit"),
         api.get("/settings/prospeo"),
+        api.get("/settings/azure-ad"),
       ]);
       setApollo(a);
       setApolloUrl(a.base_url);
@@ -122,6 +132,11 @@ export default function Settings() {
       setLogokitUrl(l.base_url);
       setProspeo(p);
       setProspeoUrl(p.base_url);
+      setAzureAd(az);
+      setAzureClientId(az.client_id || "");
+      setAzureAuthority(az.authority || "");
+      setAzureRedirectUri(az.redirect_uri || "");
+      setAzureDomainsText((az.allowed_domains || []).join("\n"));
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -420,7 +435,58 @@ export default function Settings() {
     }
   };
 
-  if (!apollo || !groq || !logokit || !prospeo) return <PageLoader />;
+  const toggleAzureAd = async (value) => {
+    try {
+      const { data } = await api.put("/settings/azure-ad", { enabled: value });
+      setAzureAd(data);
+      toast.success(`Microsoft sign-in ${value ? "enabled" : "disabled"}.`);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const saveAzureAd = async () => {
+    setAzureSaving(true);
+    try {
+      const allowed_domains = azureDomainsText
+        .split(/[\n,;]+/)
+        .map((d) => d.trim())
+        .filter(Boolean);
+      const payload = {
+        client_id: azureClientId.trim(),
+        authority: azureAuthority.trim(),
+        redirect_uri: azureRedirectUri.trim(),
+        allowed_domains,
+      };
+      if (azureClientSecret.trim()) payload.client_secret = azureClientSecret.trim();
+      const { data } = await api.put("/settings/azure-ad", payload);
+      setAzureAd(data);
+      setAzureClientId(data.client_id || "");
+      setAzureClientSecret("");
+      setAzureAuthority(data.authority || "");
+      setAzureRedirectUri(data.redirect_uri || "");
+      setAzureDomainsText((data.allowed_domains || []).join("\n"));
+      toast.success("Azure AD settings saved.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setAzureSaving(false);
+    }
+  };
+
+  const clearAzureSecret = async () => {
+    if (!confirm("Remove the Azure client secret?")) return;
+    try {
+      const { data } = await api.put("/settings/azure-ad", { clear_client_secret: true });
+      setAzureAd(data);
+      setAzureClientSecret("");
+      toast.success("Azure client secret removed.");
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  if (!apollo || !groq || !logokit || !prospeo || !azureAd) return <PageLoader />;
 
   const formatJobTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
 
@@ -629,6 +695,23 @@ export default function Settings() {
                 setLogokitTest(null);
                 setDetail("logokit");
               }}
+            />
+            <IntegrationTile
+              icon={
+                <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
+                  <rect x="1" y="1" width="9" height="9" fill="#0078d4" />
+                  <rect x="11" y="1" width="9" height="9" fill="#0078d4" opacity="0.85" />
+                  <rect x="1" y="11" width="9" height="9" fill="#0078d4" opacity="0.85" />
+                  <rect x="11" y="11" width="9" height="9" fill="#0078d4" opacity="0.7" />
+                </svg>
+              }
+              accent="bg-sky-50"
+              title="Microsoft Entra ID"
+              description="Sign in with Microsoft from any Azure AD tenant. Only users with approved email domains get access."
+              configured={azureAd.configured}
+              enabled={azureAd.enabled}
+              onToggle={toggleAzureAd}
+              onView={() => setDetail("azure-ad")}
             />
           </div>
         </div>
@@ -1051,6 +1134,111 @@ export default function Settings() {
             <input className="input" value={prospeoUrl} onChange={(e) => setProspeoUrl(e.target.value)} placeholder="https://api.prospeo.io" />
           </Field>
           <TestResult result={prospeoTest} />
+        </div>
+      </Modal>
+
+      <Modal
+        open={detail === "azure-ad"}
+        onClose={() => setDetail(null)}
+        title="Microsoft Entra ID"
+        footer={
+          <button className="btn-primary" onClick={saveAzureAd} disabled={azureSaving}>
+            {azureSaving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+          </button>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border border-ink-100 bg-ink-50/60 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-ink-900">Microsoft sign-in</p>
+              <p className="text-xs text-ink-400">Allow users to sign in via Azure AD from other tenants.</p>
+            </div>
+            <Toggle checked={azureAd.enabled} onChange={toggleAzureAd} />
+          </div>
+
+          <div className="rounded-lg border border-ink-100 bg-ink-50/40 px-4 py-3 text-xs text-ink-600">
+            <p className="font-medium text-ink-800">Azure portal setup</p>
+            <ul className="mt-2 list-disc space-y-1 pl-4">
+              <li>Register a multi-tenant app (Accounts in any organizational directory).</li>
+              <li>
+                Redirect URI (Web):{" "}
+                <code className="rounded bg-white px-1 py-0.5 text-ink-800">
+                  {azureRedirectUri || azureAd.suggested_redirect_uri || "https://your-domain/auth/azure/callback"}
+                </code>
+              </li>
+              <li>Copy the Application (client) ID and create a client secret below.</li>
+            </ul>
+          </div>
+
+          <Field label="Client ID">
+            <input
+              className="input font-mono text-xs"
+              value={azureClientId}
+              onChange={(e) => setAzureClientId(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+            />
+          </Field>
+
+          <Field label="Client secret">
+            <div className="flex gap-2">
+              <input
+                className="input font-mono text-xs"
+                type="password"
+                value={azureClientSecret}
+                onChange={(e) => setAzureClientSecret(e.target.value)}
+                placeholder={azureAd.configured ? azureAd.client_secret_masked || "••••••••" : "Enter client secret"}
+              />
+              {azureAd.configured && (
+                <button className="btn-danger whitespace-nowrap" onClick={clearAzureSecret}>
+                  Remove
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-ink-400">Stored encrypted. Leave empty to keep the current secret.</p>
+          </Field>
+
+          <Field label="Authority">
+            <input
+              className="input font-mono text-xs"
+              value={azureAuthority}
+              onChange={(e) => setAzureAuthority(e.target.value)}
+              placeholder="https://login.microsoftonline.com/organizations"
+            />
+            <p className="mt-1 text-xs text-ink-400">
+              Use <code className="text-xs">/organizations</code> for any Azure AD tenant (multi-tenant).
+            </p>
+          </Field>
+
+          <Field label="Redirect URI">
+            <input
+              className="input font-mono text-xs"
+              value={azureRedirectUri}
+              onChange={(e) => setAzureRedirectUri(e.target.value)}
+              placeholder={azureAd.suggested_redirect_uri || "https://your-domain/auth/azure/callback"}
+            />
+            <p className="mt-1 text-xs text-ink-400">
+              Must match the redirect URI in Azure. Leave empty to use the suggested value above.
+            </p>
+          </Field>
+
+          <Field label="Allowed email domains">
+            <textarea
+              className="input min-h-[120px] font-mono text-xs"
+              value={azureDomainsText}
+              onChange={(e) => setAzureDomainsText(e.target.value)}
+              placeholder={"xential.nl\npartner.com"}
+            />
+            <p className="mt-1 text-xs text-ink-400">
+              One domain per line (or comma-separated). Users from other Azure AD tenants can sign in, but only if
+              their email domain is listed here.
+            </p>
+          </Field>
+
+          {!azureAd.configured && (
+            <p className="text-sm text-amber-700">
+              Enter client ID and client secret, save, then enable Microsoft sign-in.
+            </p>
+          )}
         </div>
       </Modal>
     </div>

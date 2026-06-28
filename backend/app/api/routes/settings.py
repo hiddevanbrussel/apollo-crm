@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
 from app.models import User
+from app.schemas.azure_auth import AzureAdSettingsOut, AzureAdSettingsUpdate
 from app.schemas.settings import (
     ApolloSettingsOut,
     ApolloSettingsUpdate,
@@ -21,6 +22,14 @@ from app.schemas.settings import (
     ProspeoSettingsOut,
     ProspeoSettingsUpdate,
     ProspeoTestResult,
+)
+from app.services.azure_auth_service import (
+    get_masked_client_secret,
+    get_or_create_azure_settings,
+    is_azure_configured,
+    normalize_domains,
+    set_client_secret,
+    suggest_redirect_uri,
 )
 from app.services.logokit_service import LogokitService, validate_publishable_token
 from app.services.settings_service import (
@@ -63,6 +72,7 @@ def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_cur
     groq = get_or_create_groq_settings(db)
     logokit = get_or_create_logokit_settings(db)
     prospeo = get_or_create_prospeo_settings(db)
+    azure = get_or_create_azure_settings(db)
     return IntegrationsStatusOut(
         apollo=IntegrationServiceStatus(enabled=apollo.enabled, configured=is_configured(apollo)),
         groq=IntegrationServiceStatus(enabled=groq.enabled, configured=groq_is_configured(groq)),
@@ -71,6 +81,9 @@ def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_cur
         ),
         prospeo=IntegrationServiceStatus(
             enabled=prospeo.enabled, configured=prospeo_is_configured(prospeo)
+        ),
+        azure_ad=IntegrationServiceStatus(
+            enabled=azure.enabled, configured=is_azure_configured(azure)
         ),
     )
 
@@ -280,3 +293,54 @@ def test_prospeo_settings(db: Session = Depends(get_db), _: User = Depends(get_a
     client = build_prospeo_client(db)
     ok, message, status_code = client.test_connection()
     return ProspeoTestResult(success=ok, message=message, status_code=status_code)
+
+
+def _azure_to_out(row) -> AzureAdSettingsOut:
+    configured = is_azure_configured(row)
+    return AzureAdSettingsOut(
+        enabled=row.enabled,
+        configured=configured,
+        client_id=row.client_id,
+        client_secret_masked=get_masked_client_secret(row),
+        authority=row.authority,
+        redirect_uri=row.redirect_uri,
+        suggested_redirect_uri=suggest_redirect_uri(),
+        allowed_domains=list(row.allowed_domains or []),
+    )
+
+
+@router.get("/azure-ad", response_model=AzureAdSettingsOut)
+def get_azure_ad_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    return _azure_to_out(get_or_create_azure_settings(db))
+
+
+@router.put("/azure-ad", response_model=AzureAdSettingsOut)
+def update_azure_ad_settings(
+    payload: AzureAdSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    row = get_or_create_azure_settings(db)
+    if payload.enabled is not None:
+        if payload.enabled and not is_azure_configured(row):
+            raise HTTPException(
+                status_code=400,
+                detail="Configure client ID and client secret before enabling Microsoft sign-in.",
+            )
+        row.enabled = payload.enabled
+    if payload.clear_client_secret:
+        row.client_secret_encrypted = None
+    elif payload.client_secret:
+        set_client_secret(row, payload.client_secret.strip())
+    if payload.client_id is not None:
+        row.client_id = payload.client_id.strip() or None
+    if payload.authority is not None and payload.authority.strip():
+        row.authority = payload.authority.strip().rstrip("/")
+    if payload.redirect_uri is not None:
+        value = payload.redirect_uri.strip()
+        row.redirect_uri = value.rstrip("/") if value else None
+    if payload.allowed_domains is not None:
+        row.allowed_domains = normalize_domains(payload.allowed_domains)
+    db.commit()
+    db.refresh(row)
+    return _azure_to_out(row)

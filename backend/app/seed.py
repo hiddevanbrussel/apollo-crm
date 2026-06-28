@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.security import hash_password
-from app.models import ApolloSettings, User
+from app.models import ApolloSettings, AzureAdSettings, User
 
 logger = logging.getLogger("seed")
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +31,7 @@ def seed() -> None:
                 name=settings.ADMIN_NAME,
                 email=settings.ADMIN_EMAIL,
                 password_hash=hash_password(settings.ADMIN_PASSWORD),
+                auth_provider="local",
                 role="admin",
             )
             db.add(admin)
@@ -49,6 +50,16 @@ def seed() -> None:
                 )
             )
             logger.info("Created default Apollo settings row.")
+
+        azure_row = db.execute(select(AzureAdSettings).limit(1)).scalar_one_or_none()
+        if not azure_row:
+            db.add(
+                AzureAdSettings(
+                    allowed_domains=[],
+                    enabled=False,
+                )
+            )
+            logger.info("Created default Azure AD settings row.")
 
         db.commit()
         logger.info("Bootstrap complete (no sample data).")

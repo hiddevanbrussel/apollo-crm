@@ -36,6 +36,7 @@ def create_user(
         name=payload.name,
         email=payload.email,
         password_hash=hash_password(payload.password),
+        auth_provider="local",
         role=role,
     )
     db.add(user)
