@@ -19,21 +19,36 @@ export function setAuthStateHandler(handler) {
   authStateHandler = handler;
 }
 
+function normalizeToken(token) {
+  if (!token) return null;
+  const value = String(token).trim();
+  if (!value || value === "null" || value === "undefined") return null;
+  return value.replace(/^Bearer\s+/i, "");
+}
+
 export function setToken(token) {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, String(token).trim());
+  const normalized = normalizeToken(token);
+  if (normalized) {
+    localStorage.setItem(TOKEN_KEY, normalized);
   } else {
     localStorage.removeItem(TOKEN_KEY);
   }
 }
 
 export function getToken() {
-  const token = localStorage.getItem(TOKEN_KEY);
-  return token?.trim() || null;
+  return normalizeToken(localStorage.getItem(TOKEN_KEY));
 }
 
 export function isUnauthorized(error) {
   return error?.isAuthError === true || error?.response?.status === 401;
+}
+
+function isAuthMeRequest(url = "") {
+  return url.includes("/auth/me");
+}
+
+function isAuthBootstrapRequest(url = "") {
+  return isAuthMeRequest(url) || url.includes("/auth/azure/config");
 }
 
 api.interceptors.request.use((config) => {
@@ -52,13 +67,13 @@ api.interceptors.response.use(
 
     if (status === 401 && !url.includes("/auth/login")) {
       error.isAuthError = true;
-      setToken(null);
-      authStateHandler?.({ type: "unauthorized" });
 
-      const isAuthMe = url.includes("/auth/me");
-      if (!authBootstrapping || !isAuthMe) {
-        // Mid-session expiry: hard redirect so open tabs recover cleanly.
-        if (window.location.pathname !== "/login") {
+      // Bootstrap auth failures are handled in AuthContext (avoid clearing a fresh token).
+      if (!isAuthBootstrapRequest(url)) {
+        setToken(null);
+        authStateHandler?.({ type: "unauthorized" });
+
+        if (!authBootstrapping && window.location.pathname !== "/login") {
           window.location.replace("/login");
         }
       }

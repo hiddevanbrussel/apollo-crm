@@ -1,34 +1,45 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { Icon } from "../components/icons";
 import { PageLoader } from "../components/ui";
-import { setToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
 export default function LoginAzureCallback() {
-  const { user, loading } = useAuth();
+  const { user, loading, completeSession } = useAuth();
   const [searchParams] = useSearchParams();
   const [error, setError] = useState(null);
-  const [done, setDone] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const handledRef = useRef(false);
 
   useEffect(() => {
-    const token = searchParams.get("token");
+    if (handledRef.current) return;
+
     const err = searchParams.get("error");
     if (err) {
+      handledRef.current = true;
       setError(err);
       return;
     }
-    if (token) {
-      setToken(token);
-      setDone(true);
-      window.location.replace("/");
-    } else if (!loading) {
-      setError("No sign-in token received.");
-    }
-  }, [searchParams, loading]);
 
-  if (user || done) return <Navigate to="/" replace />;
-  if (loading && !error) return <PageLoader />;
+    const token = searchParams.get("token");
+    if (!token) {
+      if (!loading) {
+        handledRef.current = true;
+        setError("No sign-in token received.");
+      }
+      return;
+    }
+
+    handledRef.current = true;
+    setFinishing(true);
+    completeSession(token).catch(() => {
+      setFinishing(false);
+      setError("Could not complete Microsoft sign-in.");
+    });
+  }, [searchParams, loading, completeSession]);
+
+  if (user) return <Navigate to="/" replace />;
+  if (finishing || (loading && !error)) return <PageLoader />;
 
   return (
     <div className="flex min-h-full items-center justify-center bg-canvas px-4 py-12">

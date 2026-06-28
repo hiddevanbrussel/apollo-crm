@@ -13,10 +13,13 @@ export function AuthProvider({ children }) {
     setAuthBootstrapping(true);
     setLoading(true);
 
-    if (!getToken()) {
-      setUser(null);
-      setAuthBootstrapping(false);
-      setLoading(false);
+    const token = getToken();
+    if (!token) {
+      if (seq === loadSeq.current) {
+        setUser(null);
+        setAuthBootstrapping(false);
+        setLoading(false);
+      }
       return;
     }
 
@@ -26,7 +29,10 @@ export function AuthProvider({ children }) {
       setUser(data);
     } catch {
       if (seq !== loadSeq.current) return;
-      setToken(null);
+      // Only clear the token if it is still the one this request used.
+      if (getToken() === token) {
+        setToken(null);
+      }
       setUser(null);
     } finally {
       if (seq !== loadSeq.current) return;
@@ -56,6 +62,11 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
+  const completeSession = async (accessToken) => {
+    setToken(accessToken);
+    await loadMe();
+  };
+
   const logout = () => {
     setToken(null);
     setUser(null);
@@ -65,7 +76,7 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.role === "admin";
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAdmin }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, completeSession, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );
