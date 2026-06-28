@@ -37,6 +37,7 @@ class ContactUpdate(BaseModel):
     last_name: str | None = None
     full_name: str | None = None
     title: str | None = None
+    title_ai: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
     linkedin_url: str | None = None
@@ -50,6 +51,7 @@ class ContactOut(ContactBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    title_ai: str | None = None
     headline: str | None = None
     email_status: str | None = None
     photo_url: str | None = None
@@ -190,6 +192,37 @@ class ContactEnrichJobOut(BaseModel):
 
 class ContactEnrichJobStartResult(BaseModel):
     job: ContactEnrichJobOut
+    started: bool
+
+
+class ContactTitleAiJobStart(BaseModel):
+    ids: list[int] | None = None
+    filters: ContactEnrichJobFilters | None = None
+    only_missing: bool = True
+    force: bool = False
+
+
+class ContactTitleAiJobOut(BaseModel):
+    id: str
+    status: str
+    source: str
+    filters: dict | None = None
+    total_contacts: int
+    processed_contacts: int
+    normalized: int
+    skipped: int
+    failed: int
+    current_index: int | None = None
+    current_contact: str | None = None
+    items: list[ContactEnrichJobItemOut]
+    log: list[ContactEnrichJobLogEntry]
+    error: str | None = None
+    started_at: float
+    finished_at: float | None = None
+
+
+class ContactTitleAiJobStartResult(BaseModel):
+    job: ContactTitleAiJobOut
     started: bool
 
 

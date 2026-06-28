@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 import csv
@@ -21,6 +21,9 @@ from app.schemas.contact import (
     ContactEnrichJobStart,
     ContactEnrichJobStartResult,
     ContactEnrichJobFilters,
+    ContactTitleAiJobOut,
+    ContactTitleAiJobStart,
+    ContactTitleAiJobStartResult,
     ContactFilterOptions,
     ContactImportResult,
     ContactList,
@@ -38,7 +41,8 @@ from app.services.contact_enrich import (
 from app.services.apollo_mapper import map_person
 from app.services.apollo_service import ApolloError
 from app.services.company_domains import add_domain, email_domain
-from app.services import contact_enrich_jobs
+from app.services import contact_enrich_jobs, contact_title_jobs
+from app.services.contact_title_ai import ensure_groq_title_ai_enabled, normalize_contact_title_ai
 from app.services.import_service import (
     ImportParseError,
     contact_canonical_field,
@@ -66,6 +70,15 @@ WATERFALL_WEBHOOK_ENDPOINT = "/webhooks/apollo/waterfall"
 def _contact_has_no_title():
     return or_(Contact.title.is_(None), func.trim(Contact.title) == "")
 
+
+def _contact_has_title():
+    return and_(Contact.title.isnot(None), func.trim(Contact.title) != "")
+
+
+def _contact_missing_title_ai():
+    return or_(Contact.title_ai.is_(None), func.trim(Contact.title_ai) == "")
+
+
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
 
@@ -92,6 +105,7 @@ def _apply_contact_filters(
                 func.lower(Contact.first_name).like(like),
                 func.lower(Contact.last_name).like(like),
                 func.lower(Contact.title).like(like),
+                func.lower(Contact.title_ai).like(like),
                 func.lower(Contact.email).like(like),
             )
         )
@@ -211,6 +225,50 @@ def _resolve_enrich_job_contact_ids(
 
 def _job_out(job: contact_enrich_jobs.ContactEnrichJob) -> ContactEnrichJobOut:
     return ContactEnrichJobOut(**job.to_dict())
+
+
+def _title_job_out(job: contact_title_jobs.ContactTitleAiJob) -> ContactTitleAiJobOut:
+    return ContactTitleAiJobOut(**job.to_dict())
+
+
+def _ensure_groq_title_ai(db: Session) -> None:
+    try:
+        ensure_groq_title_ai_enabled(db)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _resolve_title_job_contact_ids(
+    db: Session,
+    payload: ContactTitleAiJobStart,
+) -> tuple[list[int], str, dict | None]:
+    if payload.ids:
+        return list(dict.fromkeys(payload.ids)), "selected", None
+
+    filters = payload.filters or ContactEnrichJobFilters()
+    stmt = _apply_contact_filters(
+        select(Contact),
+        search=filters.search,
+        company_id=filters.company_id,
+        source=filters.source,
+        enrichment_status=filters.enrichment_status,
+        country=filters.country,
+        city=filters.city,
+        seniority=filters.seniority,
+        department=filters.department,
+        title=filters.title,
+        titles=filters.titles or None,
+        tier=filters.tier,
+    )
+    stmt = stmt.where(_contact_has_title())
+    if payload.only_missing and not payload.force:
+        stmt = stmt.where(_contact_missing_title_ai())
+    contacts = db.scalars(stmt.order_by(Contact.updated_at.asc(), Contact.id.asc())).all()
+    contact_ids = [c.id for c in contacts]
+    filters_dict = filters.model_dump(exclude_none=True)
+    if filters.titles:
+        filters_dict["titles"] = filters.titles
+    return contact_ids, "filtered", filters_dict or None
 
 
 def _waterfall_contacts_filter():
@@ -421,6 +479,7 @@ def export_contacts(
             "last_name",
             "email",
             "title",
+            "title_ai",
             "company",
             "phone",
             "linkedin_url",
@@ -441,6 +500,7 @@ def export_contacts(
                 c.last_name or "",
                 c.email or "",
                 c.title or "",
+                c.title_ai or "",
                 comp.name if comp else "",
                 c.phone or "",
                 c.linkedin_url or "",
@@ -1039,3 +1099,69 @@ def enrich_contact_prospeo_only(
     db.commit()
     db.refresh(contact)
     return ContactOut.model_validate(contact)
+
+
+@router.post("/{contact_id}/normalize-title", response_model=ContactOut)
+def normalize_contact_title(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    contact = db.execute(
+        select(Contact).options(joinedload(Contact.company)).where(Contact.id == contact_id)
+    ).scalar_one_or_none()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found.")
+
+    _ensure_groq_title_ai(db)
+    result = normalize_contact_title_ai(db, contact, force=True)
+    if result.skipped and not result.ok:
+        raise HTTPException(status_code=400, detail=result.error or "Nothing to normalize.")
+    if not result.ok:
+        db.commit()
+        raise HTTPException(status_code=400, detail=result.error or "Title normalization failed.")
+
+    db.commit()
+    db.refresh(contact)
+    return ContactOut.model_validate(contact)
+
+
+@router.post("/title-ai/jobs", response_model=ContactTitleAiJobStartResult)
+def start_contact_title_ai_job(
+    payload: ContactTitleAiJobStart,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    _ensure_groq_title_ai(db)
+    contact_ids, source, filters = _resolve_title_job_contact_ids(db, payload)
+    if not contact_ids:
+        raise HTTPException(status_code=400, detail="No contacts matched for this job.")
+
+    job, started = contact_title_jobs.start_job(
+        contact_ids,
+        source=source,
+        filters=filters,
+        only_missing=payload.only_missing,
+        force=payload.force,
+        db=db,
+    )
+    return ContactTitleAiJobStartResult(job=_title_job_out(job), started=started)
+
+
+@router.get("/title-ai/jobs", response_model=list[ContactTitleAiJobOut])
+def list_contact_title_ai_jobs(_: User = Depends(get_current_user)):
+    return [_title_job_out(job) for job in contact_title_jobs.list_jobs()]
+
+
+@router.get("/title-ai/jobs/active", response_model=ContactTitleAiJobOut | None)
+def get_active_contact_title_ai_job(_: User = Depends(get_current_user)):
+    job = contact_title_jobs.get_active_job()
+    return _title_job_out(job) if job else None
+
+
+@router.get("/title-ai/jobs/{job_id}", response_model=ContactTitleAiJobOut)
+def get_contact_title_ai_job(job_id: str, _: User = Depends(get_current_user)):
+    job = contact_title_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return _title_job_out(job)

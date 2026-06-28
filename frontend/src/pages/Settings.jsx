@@ -87,6 +87,8 @@ export default function Settings() {
   const [domainJob, setDomainJob] = useState(null);
   const [enrichJob, setEnrichJob] = useState(null);
   const [enrichJobs, setEnrichJobs] = useState([]);
+  const [titleAiJob, setTitleAiJob] = useState(null);
+  const [titleAiJobs, setTitleAiJobs] = useState([]);
 
   // Logokit state
   const [logokit, setLogokit] = useState(null);
@@ -157,6 +159,14 @@ export default function Settings() {
       .then((r) => setEnrichJobs(r.data || []))
       .catch(() => setEnrichJobs([]));
     api
+      .get("/contacts/title-ai/jobs/active")
+      .then((r) => setTitleAiJob(r.data || null))
+      .catch(() => setTitleAiJob(null));
+    api
+      .get("/contacts/title-ai/jobs")
+      .then((r) => setTitleAiJobs(r.data || []))
+      .catch(() => setTitleAiJobs([]));
+    api
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
@@ -212,6 +222,34 @@ export default function Settings() {
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enrichJob?.id, enrichJob?.status]);
+
+  useEffect(() => {
+    if (!titleAiJob || !["queued", "running"].includes(titleAiJob.status)) return;
+    const timer = setInterval(async () => {
+      try {
+        const { data } = await api.get(`/contacts/title-ai/jobs/${titleAiJob.id}`);
+        setTitleAiJob(data);
+        if (!["queued", "running"].includes(data.status)) {
+          clearInterval(timer);
+          const parts = [];
+          if (data.normalized) parts.push(`${data.normalized} normalized`);
+          if (data.skipped) parts.push(`${data.skipped} skipped`);
+          if (data.failed) parts.push(`${data.failed} failed`);
+          toast.success(
+            data.status === "completed"
+              ? `Title AI job done${parts.length ? `: ${parts.join(", ")}` : "."}`
+              : `Title AI job failed: ${data.error || "unknown error"}`
+          );
+          const { data: list } = await api.get("/contacts/title-ai/jobs");
+          setTitleAiJobs(list || []);
+        }
+      } catch {
+        clearInterval(timer);
+      }
+    }, 1500);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [titleAiJob?.id, titleAiJob?.status]);
 
   // --- Apollo handlers ---
   const toggleApollo = async (value) => {
@@ -498,12 +536,89 @@ export default function Settings() {
   };
 
   const resultClass = (result) => {
-    if (result === "enriched") return "bg-green-50 text-green-700";
+    if (result === "enriched" || result === "normalized") return "bg-green-50 text-green-700";
     if (result === "pending") return "bg-amber-50 text-amber-700";
     if (result === "failed") return "bg-red-50 text-red-700";
     if (result === "skipped") return "bg-ink-100 text-ink-500";
     return "bg-ink-100 text-ink-600";
   };
+
+  const TitleAiJobCard = ({ job, active = false }) => (
+    <div className={`rounded-lg border p-4 ${active ? "border-brand-200 bg-brand-50/30" : "border-ink-100"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-ink-900">
+            {job.source === "selected" ? "Selected contacts" : "Filtered contacts"}
+            {active && <span className="ml-2 text-xs font-normal text-brand-600">Active</span>}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-500">
+            Started {formatJobTime(job.started_at)}
+            {job.finished_at && ` · Finished ${formatJobTime(job.finished_at)}`}
+          </p>
+        </div>
+        <span className={`badge capitalize ${batchStatusClass(job.status)}`}>{job.status}</span>
+      </div>
+      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-ink-100">
+        <div
+          className="h-full rounded-full bg-brand-500 transition-all duration-500"
+          style={{
+            width: `${
+              job.total_contacts
+                ? Math.round((job.processed_contacts / job.total_contacts) * 100)
+                : job.status === "running"
+                  ? 5
+                  : 100
+            }%`,
+          }}
+        />
+      </div>
+      <p className="mt-1.5 text-xs text-ink-500">
+        {job.processed_contacts}/{job.total_contacts} contacts · {job.normalized} normalized · {job.skipped} skipped ·{" "}
+        {job.failed} failed
+        {job.current_contact && job.status === "running" && (
+          <span className="block truncate text-ink-400">Current: {job.current_contact}</span>
+        )}
+      </p>
+      {job.items?.length > 0 && (
+        <div className="mt-3 max-h-64 overflow-y-auto overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-white">
+              <tr className="border-b border-ink-100 text-left text-ink-400">
+                <th className="pb-1.5 pr-3 font-medium">#</th>
+                <th className="pb-1.5 pr-3 font-medium">Contact</th>
+                <th className="pb-1.5 pr-3 font-medium">Status</th>
+                <th className="pb-1.5 font-medium">Detail</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {job.items.map((item) => (
+                <tr key={item.index} className={item.status === "running" ? "bg-amber-50/50" : ""}>
+                  <td className="py-1.5 pr-3 font-medium text-ink-700">{item.index}</td>
+                  <td className="py-1.5 pr-3 text-ink-700">{item.label || `#${item.contact_id}`}</td>
+                  <td className="py-1.5 pr-3">
+                    {item.result ? (
+                      <span className={`badge capitalize ${resultClass(item.result)}`}>{item.result}</span>
+                    ) : (
+                      <span className={`badge capitalize ${batchStatusClass(item.status)}`}>{item.status}</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-ink-500">{item.error || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {job.log?.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-brand-600">Log ({job.log.length})</summary>
+          <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-ink-900 p-3 text-[11px] text-ink-100">
+            {job.log.map((entry) => `[${formatJobTime(entry.at)}] ${entry.message}`).join("\n")}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
 
   const JobCard = ({ job, active = false }) => (
     <div className={`rounded-lg border p-4 ${active ? "border-brand-200 bg-brand-50/30" : "border-ink-100"}`}>
@@ -661,7 +776,7 @@ export default function Settings() {
               icon={<Icon.Bolt width={18} height={18} className="text-accent-600" />}
               accent="bg-accent-50"
               title="Groq API"
-              description="AI domain finder that searches the web for a company's official website using its name and country."
+              description="AI domain finder for companies and Title AI normalization for uniform contact job titles."
               configured={groq.configured}
               enabled={groq.enabled}
               onToggle={toggleGroq}
@@ -751,6 +866,37 @@ export default function Settings() {
                 <div className="mt-3 space-y-3">
                   {enrichJobs.slice(1).map((job) => (
                     <JobCard key={job.id} job={job} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-ink-900">Title AI (Groq)</h3>
+            <p className="mt-1 text-xs text-ink-500">
+              Start from Contacts via &quot;Title AI&quot; or &quot;Title AI (filtered)&quot;. Original titles are kept;
+              Title AI stores the normalized version.
+            </p>
+            {titleAiJob && ["queued", "running"].includes(titleAiJob.status) ? (
+              <div className="mt-4">
+                <TitleAiJobCard job={titleAiJob} active />
+              </div>
+            ) : titleAiJobs.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-400">No Title AI jobs yet.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <TitleAiJobCard job={titleAiJobs[0]} active={false} />
+              </div>
+            )}
+            {titleAiJobs.length > 1 && (
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs font-medium text-brand-600">
+                  Previous jobs ({titleAiJobs.length - 1})
+                </summary>
+                <div className="mt-3 space-y-3">
+                  {titleAiJobs.slice(1).map((job) => (
+                    <TitleAiJobCard key={job.id} job={job} />
                   ))}
                 </div>
               </details>

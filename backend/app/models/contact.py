@@ -18,6 +18,7 @@ class Contact(Base):
     last_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title_ai: Mapped[str | None] = mapped_column(String(255), nullable=True)
     headline: Mapped[str | None] = mapped_column(String(500), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     email_status: Mapped[str | None] = mapped_column(String(60), nullable=True)

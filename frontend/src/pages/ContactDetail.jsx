@@ -30,6 +30,7 @@ const EDIT_FIELDS = [
   "last_name",
   "full_name",
   "title",
+  "title_ai",
   "email",
   "phone",
   "linkedin_url",
@@ -51,7 +52,8 @@ export default function ContactDetail() {
   const [completing, setCompleting] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
   const [prospeoReady, setProspeoReady] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
+  const [groqReady, setGroqReady] = useState(false);
+  const [normalizingTitle, setNormalizingTitle] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [companies, setCompanies] = useState([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -62,6 +64,7 @@ export default function ContactDetail() {
       .then((res) => {
         setApolloReady(res.data.apollo?.enabled && res.data.apollo?.configured);
         setProspeoReady(res.data.prospeo?.enabled && res.data.prospeo?.configured);
+        setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
       })
       .catch(() => {
         setApolloReady(false);
@@ -126,6 +129,19 @@ export default function ContactDetail() {
       toast.error(apiError(err));
     } finally {
       setCompleting(false);
+    }
+  };
+
+  const normalizeTitle = async () => {
+    setNormalizingTitle(true);
+    try {
+      const { data } = await api.post(`/contacts/${id}/normalize-title`);
+      setContact(data);
+      toast.success(data.title_ai ? `Title AI: ${data.title_ai}` : "Title normalized.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setNormalizingTitle(false);
     }
   };
 
@@ -207,8 +223,13 @@ export default function ContactDetail() {
           )}
           <div>
             <h1 className="text-xl font-semibold text-ink-900">{name}</h1>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <span className="text-sm text-ink-500">{contact.title || "—"}</span>
+              {contact.title_ai && contact.title_ai !== contact.title && (
+                <span className="text-sm text-brand-600" title="AI-normalized title">
+                  → {contact.title_ai}
+                </span>
+              )}
               <StatusBadge status={contact.enrichment_status} />
               <SourceBadge source={contact.source} />
             </div>
@@ -252,6 +273,23 @@ export default function ContactDetail() {
           )}
           {isAdmin && (
           <button
+            className="btn-secondary"
+            onClick={normalizeTitle}
+            disabled={normalizingTitle || !groqReady || !contact.title?.trim()}
+            title={
+              !groqReady
+                ? "Groq is off — enable it in Settings"
+                : !contact.title?.trim()
+                  ? "Contact has no title to normalize"
+                  : "Generate a uniform title via Groq AI (keeps original title)"
+            }
+          >
+            {normalizingTitle ? <Spinner className="h-4 w-4" /> : <Icon.Bolt width={18} height={18} />}
+            Title AI
+          </button>
+          )}
+          {isAdmin && (
+          <button
             className="btn-primary"
             onClick={enrich}
             disabled={enriching || !enrichReady || !canMatch}
@@ -274,6 +312,8 @@ export default function ContactDetail() {
         <div className="card p-5 lg:col-span-2">
           <h2 className="mb-2 text-sm font-semibold text-ink-900">Details</h2>
           <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
+            <Detail label="Title (original)" value={contact.title} />
+            <Detail label="Title AI" value={contact.title_ai} />
             <Detail label="Email" value={contact.email} href={contact.email ? `mailto:${contact.email}` : null} icon={Icon.Mail} />
             <Detail label="Email status" value={contact.email_status} />
             <Detail label="Phone" value={contact.phone} href={contact.phone ? `tel:${contact.phone}` : null} icon={Icon.Phone} />
@@ -424,6 +464,14 @@ export default function ContactDetail() {
               className="input"
               value={editForm.title || ""}
               onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+            />
+          </Field>
+          <Field label="Title AI">
+            <input
+              className="input"
+              value={editForm.title_ai || ""}
+              onChange={(e) => setEditForm({ ...editForm, title_ai: e.target.value })}
+              placeholder="Normalized title (optional)"
             />
           </Field>
           <Field label="Email">

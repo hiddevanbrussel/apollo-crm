@@ -40,6 +40,20 @@ SYSTEM_PROMPT = (
 )
 
 
+TITLE_NORMALIZE_SYSTEM_PROMPT = (
+    "You normalize B2B job titles into a short, consistent canonical form for CRM reporting.\n\n"
+    "Rules:\n"
+    "- Preserve the meaning of the original title; never invent seniority, department, or scope.\n"
+    "- Use standard Title Case. Dutch titles may stay in Dutch when clearly Dutch (e.g. Commercieel Directeur).\n"
+    "- Expand common abbreviations (CEO, CMO, VP, Dir., Mgr., HoD).\n"
+    "- Remove noise: company names, emojis, pipes, hashtags, locations, side roles.\n"
+    "- Prefer concise titles (typically 2–5 words).\n"
+    "- Align variants to one standard (e.g. 'Head of Sales' / 'Sales Lead' → pick the clearest equivalent).\n"
+    "- If input is empty or not a job title, return title_ai as null.\n\n"
+    "Respond with ONLY a single minified JSON object and no other text, markdown or code fences."
+)
+
+
 class GroqError(Exception):
     def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
@@ -138,6 +152,52 @@ class GroqService:
             if domain:
                 result.update(found=True, domain=domain, confidence="low",
                               reason="Parsed from non-JSON response.")
+        return result
+
+    def normalize_job_title(
+        self,
+        *,
+        title: str,
+        seniority: str | None = None,
+        department: str | None = None,
+        company_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Normalize a raw job title into a consistent canonical form."""
+        context_lines = [f"Original title: {title.strip()}"]
+        if seniority:
+            context_lines.append(f"Seniority hint: {seniority}")
+        if department:
+            context_lines.append(f"Department hint: {department}")
+        if company_name:
+            context_lines.append(f"Company: {company_name}")
+        user_prompt = (
+            "\n".join(context_lines)
+            + '\n\nRespond with JSON exactly in this shape: {"title_ai": string|null, "reason": string}'
+        )
+        content = self._chat(
+            [
+                {"role": "system", "content": TITLE_NORMALIZE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+        )
+        return self._parse_title_response(content)
+
+    @staticmethod
+    def _parse_title_response(content: str) -> dict[str, Any]:
+        result = {"title_ai": None, "reason": None, "raw": content}
+        parsed = _extract_json(content)
+        if parsed:
+            title_ai = parsed.get("title_ai")
+            if isinstance(title_ai, str):
+                cleaned = title_ai.strip()
+                result["title_ai"] = cleaned or None
+            result["reason"] = parsed.get("reason")
+        else:
+            cleaned = (content or "").strip().strip('"').strip("'")
+            if cleaned and len(cleaned) <= 255 and "\n" not in cleaned:
+                result["title_ai"] = cleaned
+                result["reason"] = "Parsed from non-JSON response."
         return result
 
     def test_connection(self) -> tuple[bool, str, int | None]:

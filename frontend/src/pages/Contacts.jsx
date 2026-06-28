@@ -144,6 +144,7 @@ export default function Contacts() {
     companies: [],
   });
   const [enrichReady, setEnrichReady] = useState(false);
+  const [groqReady, setGroqReady] = useState(false);
   const [showFilters, setShowFilters] = useState(true);
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -154,6 +155,8 @@ export default function Contacts() {
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [enrichingSelected, setEnrichingSelected] = useState(false);
   const [enrichingUnenriched, setEnrichingUnenriched] = useState(false);
+  const [normalizingTitlesSelected, setNormalizingTitlesSelected] = useState(false);
+  const [normalizingTitlesFiltered, setNormalizingTitlesFiltered] = useState(false);
   const [waterfallStatus, setWaterfallStatus] = useState(null);
   const [showWaterfallLog, setShowWaterfallLog] = useState(true);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -181,9 +184,11 @@ export default function Contacts() {
         const apollo = res.data.apollo?.enabled && res.data.apollo?.configured;
         const prospeo = res.data.prospeo?.enabled && res.data.prospeo?.configured;
         setEnrichReady(apollo || prospeo);
+        setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
       })
       .catch(() => {
         setEnrichReady(false);
+        setGroqReady(false);
       });
   }, []);
 
@@ -428,6 +433,61 @@ export default function Contacts() {
     }
   };
 
+  const normalizeTitlesSelected = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    if (!confirm(`Normalize titles for ${ids.length} selected contact(s) in the background?`)) return;
+    setNormalizingTitlesSelected(true);
+    try {
+      const { data } = await api.post("/contacts/title-ai/jobs", { ids, only_missing: true });
+      if (!data.started) {
+        toast.info("A title AI job is already running. See Settings → Activity for progress.");
+      } else {
+        toast.success(
+          `Title AI job started for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+        );
+        setSelectedIds(new Set());
+      }
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setNormalizingTitlesSelected(false);
+    }
+  };
+
+  const normalizeTitlesFiltered = async () => {
+    if (
+      !confirm(
+        "Normalize titles for all filtered contacts that have a title but no Title AI yet?"
+      )
+    ) {
+      return;
+    }
+    setNormalizingTitlesFiltered(true);
+    try {
+      const jobFilters = buildJobFilters(search, filters);
+      const { data } = await api.post("/contacts/title-ai/jobs", {
+        filters: Object.keys(jobFilters).length ? jobFilters : undefined,
+        only_missing: true,
+      });
+      if (!data.job.total_contacts) {
+        toast.info("No contacts matched for the current filters.");
+        return;
+      }
+      if (!data.started) {
+        toast.info("A title AI job is already running. See Settings → Activity for progress.");
+      } else {
+        toast.success(
+          `Title AI job started for ${data.job.total_contacts} contacts. Track progress in Settings → Activity.`
+        );
+      }
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setNormalizingTitlesFiltered(false);
+    }
+  };
+
   const enrichUnenriched = async () => {
     setEnrichingUnenriched(true);
     try {
@@ -485,6 +545,25 @@ export default function Contacts() {
           {isAdmin && (
             <button
               className="btn-secondary"
+              onClick={normalizeTitlesFiltered}
+              disabled={normalizingTitlesFiltered || !groqReady || loading}
+              title={
+                groqReady
+                  ? "Generate Title AI for filtered contacts with a title but no Title AI yet"
+                  : "Enable Groq in Settings"
+              }
+            >
+              {normalizingTitlesFiltered ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                <Icon.Bolt width={18} height={18} />
+              )}
+              Title AI (filtered)
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              className="btn-secondary"
               onClick={enrichUnenriched}
               disabled={enrichingUnenriched || !enrichReady || loading}
               title={
@@ -521,6 +600,21 @@ export default function Contacts() {
             {selectedIds.size} contact{selectedIds.size === 1 ? "" : "s"} selected
           </span>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                className="btn-secondary"
+                onClick={normalizeTitlesSelected}
+                disabled={normalizingTitlesSelected || !groqReady}
+                title={groqReady ? "Generate Title AI for selected contacts" : "Enable Groq in Settings"}
+              >
+                {normalizingTitlesSelected ? (
+                  <Spinner className="h-4 w-4" />
+                ) : (
+                  <Icon.Bolt width={18} height={18} />
+                )}
+                Title AI
+              </button>
+            )}
             {isAdmin && (
               <button
                 className="btn-primary"
@@ -706,6 +800,7 @@ export default function Contacts() {
                       </th>
                       <th className="table-th">Name</th>
                       <th className="table-th">Title</th>
+                      <th className="table-th">Title AI</th>
                       <th className="table-th">Company</th>
                       <th className="table-th">Email</th>
                       <th className="table-th">Status</th>
@@ -731,6 +826,7 @@ export default function Contacts() {
                           </Link>
                         </td>
                         <td className="table-td">{ct.title || "—"}</td>
+                        <td className="table-td text-brand-700">{ct.title_ai || "—"}</td>
                         <td className="table-td">
                           {ct.company ? (
                             <Link to={`/companies/${ct.company.id}`} className="text-brand-600 hover:underline">
