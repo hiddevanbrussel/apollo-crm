@@ -54,6 +54,7 @@ export default function ContactDetail() {
   const [prospeoReady, setProspeoReady] = useState(false);
   const [groqReady, setGroqReady] = useState(false);
   const [normalizingTitle, setNormalizingTitle] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [companies, setCompanies] = useState([]);
   const [savingEdit, setSavingEdit] = useState(false);
