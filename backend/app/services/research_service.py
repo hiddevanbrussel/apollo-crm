@@ -11,10 +11,10 @@ import io
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import ResearchResult, ResearchSearch, SearchHistory
+from app.models import Company, Contact, ResearchResult, ResearchSearch, SearchHistory
 from app.services.apollo_filters import normalize_search_payload
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError, ApolloService
@@ -523,6 +523,154 @@ def export_csv(search: ResearchSearch, results: list[ResearchResult]) -> str:
         row = flatten(search.query_type, r.raw_data or {})
         writer.writerow(["" if row.get(c) is None else row.get(c) for c in cols])
     return buffer.getvalue()
+
+
+def _dedupe_key(*, apollo_id: str | None, email: str | None, name: str | None) -> str:
+    if apollo_id:
+        return f"apollo:{apollo_id.strip().lower()}"
+    if email:
+        return f"email:{email.strip().lower()}"
+    if name:
+        return f"name:{name.strip().lower()}"
+    return ""
+
+
+def list_contacts_for_company_result(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    company_result: ResearchResult,
+) -> dict[str, Any]:
+    """Contacts already known for a research company: saved people research + CRM."""
+    if parent_search.query_type != "organizations":
+        raise ApolloError("Contacts are only available for company research.", status_code=400)
+    if company_result.entity_type != "company":
+        raise ApolloError("This record is not a company.", status_code=400)
+
+    domain = domain_from_result(company_result)
+    if not domain:
+        return {"domain": None, "total": 0, "items": []}
+
+    parent_id = str(parent_search.id)
+    result_id = str(company_result.id)
+
+    people_search_stmt = select(ResearchSearch.id).where(
+        ResearchSearch.query_type == "people",
+        or_(
+            ResearchSearch.criteria["_source_company_result_id"].astext == result_id,
+            and_(
+                ResearchSearch.criteria["_source_search_id"].astext == parent_id,
+                or_(
+                    ResearchSearch.criteria["_source_company_domain"].astext == domain,
+                    ResearchSearch.criteria["organization_domains"].contains([domain]),
+                ),
+            ),
+        ),
+    )
+    people_search_ids = db.execute(people_search_stmt).scalars().all()
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    if people_search_ids:
+        rows = (
+            db.execute(
+                select(ResearchResult, ResearchSearch)
+                .join(ResearchSearch, ResearchResult.search_id == ResearchSearch.id)
+                .where(
+                    ResearchResult.search_id.in_(people_search_ids),
+                    ResearchResult.entity_type == "person",
+                )
+                .order_by(ResearchResult.id.desc())
+            )
+            .all()
+        )
+        for result, search in rows:
+            fields = _flatten_person(result.raw_data or {})
+            person_domain = (fields.get("organization_domain") or "").strip().lower()
+            if person_domain and person_domain != domain:
+                continue
+
+            apollo_id = result.apollo_id or fields.get("apollo_id")
+            name = fields.get("name") or result.name
+            email = fields.get("email")
+            key = _dedupe_key(apollo_id=apollo_id, email=email, name=name)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+
+            items.append(
+                {
+                    "source": "research",
+                    "id": result.id,
+                    "name": name,
+                    "title": fields.get("title"),
+                    "email": email,
+                    "phone": fields.get("phone"),
+                    "seniority": fields.get("seniority"),
+                    "linkedin_url": fields.get("linkedin_url"),
+                    "apollo_id": apollo_id,
+                    "enriched": is_enriched(result.raw_data),
+                    "enrichment_status": None,
+                    "contact_source": None,
+                    "research_search_id": search.id,
+                    "research_search_name": search.name,
+                    "company_id": None,
+                }
+            )
+
+    company = db.execute(
+        select(Company).where(
+            or_(
+                Company.domain == domain,
+                Company.domains.contains([domain]),
+            )
+        )
+    ).scalar_one_or_none()
+
+    if company:
+        crm_contacts = (
+            db.execute(
+                select(Contact)
+                .where(Contact.company_id == company.id)
+                .order_by(Contact.full_name, Contact.id)
+            )
+            .scalars()
+            .all()
+        )
+        for contact in crm_contacts:
+            apollo_id = contact.apollo_id
+            name = contact.full_name or " ".join(
+                p for p in [contact.first_name, contact.last_name] if p
+            ).strip() or None
+            key = _dedupe_key(apollo_id=apollo_id, email=contact.email, name=name)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+
+            items.append(
+                {
+                    "source": "crm",
+                    "id": contact.id,
+                    "name": name,
+                    "title": contact.title or contact.title_ai,
+                    "email": contact.email,
+                    "phone": contact.phone,
+                    "seniority": contact.seniority,
+                    "linkedin_url": contact.linkedin_url,
+                    "apollo_id": apollo_id,
+                    "enriched": contact.enrichment_status == "enriched",
+                    "enrichment_status": contact.enrichment_status,
+                    "contact_source": contact.source,
+                    "research_search_id": None,
+                    "research_search_name": None,
+                    "company_id": company.id,
+                }
+            )
+
+    return {"domain": domain, "total": len(items), "items": items}
 
 
 def export_xlsx(search: ResearchSearch, results: list[ResearchResult]) -> bytes:

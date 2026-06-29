@@ -71,3 +71,27 @@ class ResearchResultDetail(BaseModel):
     name: str | None = None
     fields: dict[str, Any] = {}
     raw_data: dict[str, Any] = {}
+
+
+class ResearchCompanyContactOut(BaseModel):
+    source: str  # research | crm
+    id: int
+    name: str | None = None
+    title: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    seniority: str | None = None
+    linkedin_url: str | None = None
+    apollo_id: str | None = None
+    enriched: bool = False
+    enrichment_status: str | None = None
+    contact_source: str | None = None
+    research_search_id: int | None = None
+    research_search_name: str | None = None
+    company_id: int | None = None
+
+
+class ResearchCompanyContactsOut(BaseModel):
+    domain: str | None = None
+    total: int = 0
+    items: list[ResearchCompanyContactOut] = []

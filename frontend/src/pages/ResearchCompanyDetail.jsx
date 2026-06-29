@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, Field, Modal, PageLoader, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, EmptyState, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import {
   PEOPLE_CONTACT_FIELDS,
   buildCriteria,
@@ -33,6 +33,8 @@ export default function ResearchCompanyDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const [company, setCompany] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
   const [tab, setTab] = useState("overview");
   const [apolloReady, setApolloReady] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -45,17 +47,39 @@ export default function ResearchCompanyDetail() {
 
   const load = useCallback(async () => {
     try {
-      const { data } = await api.get(`/research/searches/${searchId}/results/${resultId}`);
+      const [{ data }, contactsRes] = await Promise.all([
+        api.get(`/research/searches/${searchId}/results/${resultId}`),
+        api.get(`/research/searches/${searchId}/results/${resultId}/contacts`),
+      ]);
       setCompany(data);
+      setContacts(contactsRes.data.items || []);
     } catch (err) {
       toast.error(apiError(err));
       navigate(`/research/${searchId}`);
     }
   }, [searchId, resultId, navigate, toast]);
 
+  const loadContacts = useCallback(async () => {
+    setContactsLoading(true);
+    try {
+      const { data } = await api.get(`/research/searches/${searchId}/results/${resultId}/contacts`);
+      setContacts(data.items || []);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setContactsLoading(false);
+    }
+  }, [searchId, resultId, toast]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (tab === "contacts") {
+      loadContacts();
+    }
+  }, [tab, loadContacts]);
 
   useEffect(() => {
     api
@@ -113,7 +137,11 @@ export default function ResearchCompanyDetail() {
         `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
       );
       setShowContacts(false);
-      navigate(`/research/${created.id}`);
+      await loadContacts();
+      setTab("contacts");
+      toast.success(
+        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}. View them in the Contacts tab, or open the full research dataset.`,
+      );
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -167,6 +195,7 @@ export default function ResearchCompanyDetail() {
         <div className="flex gap-1 border-b border-ink-100 px-4">
           {[
             ["overview", "Overview"],
+            ["contacts", `Contacts (${contacts.length})`],
             ["apollo", "Apollo data"],
           ].map(([key, label]) => (
             <button
@@ -195,6 +224,111 @@ export default function ResearchCompanyDetail() {
               <Detail label="Phone" value={fields.phone} />
               <Detail label="Apollo ID" value={fields.apollo_id || company.apollo_id} />
             </dl>
+          )}
+
+          {tab === "contacts" && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-ink-500">
+                  {contactsLoading
+                    ? "Loading contacts…"
+                    : contacts.length
+                      ? `${contacts.length} contact(s) from prior research and CRM records at ${fields.domain || "this domain"}`
+                      : fields.domain
+                        ? `No contacts found yet for ${fields.domain}. Use “Find contacts” to search Apollo.`
+                        : "No domain on this company — contacts cannot be matched."}
+                </p>
+                <button
+                  className="btn-secondary"
+                  onClick={openContactsModal}
+                  disabled={!fields.domain || !apolloReady}
+                  title={fields.domain ? "Find more contacts at this company" : "No domain available"}
+                >
+                  <Icon.Users width={18} height={18} /> Find contacts
+                </button>
+              </div>
+
+              {contactsLoading ? (
+                <div className="flex justify-center py-12">
+                  <Spinner className="h-6 w-6" />
+                </div>
+              ) : contacts.length === 0 ? (
+                <EmptyState
+                  title="No contacts yet"
+                  description={
+                    fields.domain
+                      ? "Run a contact search or check if matching CRM records exist for this domain."
+                      : "Enrich this company first to get a domain, then search for contacts."
+                  }
+                  action={
+                    fields.domain && apolloReady ? (
+                      <button className="btn-primary" onClick={openContactsModal}>
+                        <Icon.Search width={18} height={18} /> Find contacts
+                      </button>
+                    ) : null
+                  }
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="border-b border-ink-100">
+                      <tr>
+                        <th className="table-th">Name</th>
+                        <th className="table-th">Title</th>
+                        <th className="table-th">Email</th>
+                        <th className="table-th">Source</th>
+                        <th className="table-th">Status</th>
+                        <th className="table-th"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-ink-100">
+                      {contacts.map((ct) => (
+                        <tr key={`${ct.source}-${ct.id}`} className="hover:bg-ink-50/60">
+                          <td className="table-td font-medium text-ink-900">{ct.name || "—"}</td>
+                          <td className="table-td">{ct.title || "—"}</td>
+                          <td className="table-td">{ct.email || "—"}</td>
+                          <td className="table-td">
+                            {ct.source === "crm" ? (
+                              <SourceBadge source={ct.contact_source || "manual"} />
+                            ) : (
+                              <span className="badge-mono border border-brand-200 bg-brand-50 text-brand-600">
+                                RESEARCH
+                              </span>
+                            )}
+                          </td>
+                          <td className="table-td">
+                            <StatusBadge
+                              status={
+                                ct.source === "crm"
+                                  ? ct.enrichment_status || "none"
+                                  : ct.enriched
+                                    ? "enriched"
+                                    : "none"
+                              }
+                            />
+                          </td>
+                          <td className="table-td text-right">
+                            {ct.source === "crm" ? (
+                              <Link to={`/contacts/${ct.id}`} className="btn-ghost px-2 py-1 text-sm">
+                                Open
+                              </Link>
+                            ) : (
+                              <Link
+                                to={`/research/${ct.research_search_id}`}
+                                className="btn-ghost px-2 py-1 text-sm"
+                                title={ct.research_search_name || "People research"}
+                              >
+                                Open research
+                              </Link>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
 
           {tab === "apollo" && (

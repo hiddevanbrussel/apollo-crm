@@ -9,6 +9,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
+    ResearchCompanyContactsOut,
     ResearchCreate,
     ResearchDetail,
     ResearchEnrichRequest,
@@ -158,6 +159,26 @@ def _get_result_or_404(db: Session, search_id: int, result_id: int) -> tuple[Res
     if not result or result.search_id != search_id:
         raise HTTPException(status_code=404, detail="Research result not found.")
     return search, result
+
+
+@router.get(
+    "/searches/{search_id}/results/{result_id}/contacts",
+    response_model=ResearchCompanyContactsOut,
+)
+def list_company_result_contacts(
+    search_id: int,
+    result_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search, result = _get_result_or_404(db, search_id, result_id)
+    try:
+        payload = research_service.list_contacts_for_company_result(
+            db, parent_search=search, company_result=result
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchCompanyContactsOut(**payload)
 
 
 @router.get("/searches/{search_id}/results/{result_id}", response_model=ResearchResultDetail)
