@@ -212,33 +212,45 @@ def _persist_search(
     return search
 
 
-def run_people_for_company_search(
+def domain_from_result(result: ResearchResult) -> str | None:
+    row = _flatten_org(result.raw_data or {})
+    domain = (row.get("domain") or "").strip().lower()
+    return domain or None
+
+
+def result_detail(result: ResearchResult, search: ResearchSearch) -> dict[str, Any]:
+    return {
+        "id": result.id,
+        "search_id": search.id,
+        "search_name": search.name,
+        "query_type": search.query_type,
+        "enriched": bool((result.raw_data or {}).get("_research_enriched")),
+        "apollo_id": result.apollo_id or (result.raw_data or {}).get("id"),
+        "name": result.name,
+        "fields": flatten(search.query_type, result.raw_data or {}),
+        "raw_data": result.raw_data or {},
+    }
+
+
+def run_people_for_domains(
     db: Session,
     client: ApolloService,
     *,
-    parent_search: ResearchSearch,
     name: str,
     criteria: dict[str, Any],
     max_records: int,
+    domains: list[str],
     created_by: int | None,
+    source_meta: dict[str, Any],
 ) -> ResearchSearch:
-    """Find people at companies from a saved company research, with extra people filters."""
-    if parent_search.query_type != "organizations":
-        raise ApolloError("People search can only be run from company research.", status_code=400)
-
-    domains = domains_from_company_search(db, parent_search)
     if not domains:
-        raise ApolloError(
-            "This company research has no domains to search people for.",
-            status_code=400,
-        )
+        raise ApolloError("No domains to search people for.", status_code=400)
 
     max_records = max(1, min(max_records, MAX_RECORDS_CAP))
     people_criteria = {k: v for k, v in criteria.items() if not str(k).startswith("_")}
     stored_criteria = {
         **people_criteria,
-        "_source_search_id": parent_search.id,
-        "_source_search_name": parent_search.name,
+        **source_meta,
         "organization_domains": domains,
     }
 
@@ -278,6 +290,81 @@ def run_people_for_company_search(
         collected=collected,
         total_available=total_available,
         created_by=created_by,
+    )
+
+
+def run_people_for_company_search(
+    db: Session,
+    client: ApolloService,
+    *,
+    parent_search: ResearchSearch,
+    name: str,
+    criteria: dict[str, Any],
+    max_records: int,
+    created_by: int | None,
+) -> ResearchSearch:
+    """Find people at companies from a saved company research, with extra people filters."""
+    if parent_search.query_type != "organizations":
+        raise ApolloError("People search can only be run from company research.", status_code=400)
+
+    domains = domains_from_company_search(db, parent_search)
+    if not domains:
+        raise ApolloError(
+            "This company research has no domains to search people for.",
+            status_code=400,
+        )
+
+    return run_people_for_domains(
+        db,
+        client,
+        name=name,
+        criteria=criteria,
+        max_records=max_records,
+        domains=domains,
+        created_by=created_by,
+        source_meta={
+            "_source_search_id": parent_search.id,
+            "_source_search_name": parent_search.name,
+        },
+    )
+
+
+def run_people_for_company_result(
+    db: Session,
+    client: ApolloService,
+    *,
+    parent_search: ResearchSearch,
+    company_result: ResearchResult,
+    name: str,
+    criteria: dict[str, Any],
+    max_records: int,
+    created_by: int | None,
+) -> ResearchSearch:
+    if parent_search.query_type != "organizations":
+        raise ApolloError("People search can only be run from company research.", status_code=400)
+    if company_result.entity_type != "company":
+        raise ApolloError("This record is not a company.", status_code=400)
+
+    domain = domain_from_result(company_result)
+    if not domain:
+        raise ApolloError("This company has no domain to search people for.", status_code=400)
+
+    company_name = company_result.name or (company_result.raw_data or {}).get("name")
+    return run_people_for_domains(
+        db,
+        client,
+        name=name,
+        criteria=criteria,
+        max_records=max_records,
+        domains=[domain],
+        created_by=created_by,
+        source_meta={
+            "_source_search_id": parent_search.id,
+            "_source_search_name": parent_search.name,
+            "_source_company_result_id": company_result.id,
+            "_source_company_name": company_name,
+            "_source_company_domain": domain,
+        },
     )
 
 

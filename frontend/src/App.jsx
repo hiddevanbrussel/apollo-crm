@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import LoginAzureCallback from "./pages/LoginAzureCallback";
 import MarketResearch from "./pages/MarketResearch";
+import ResearchCompanyDetail from "./pages/ResearchCompanyDetail";
 import ResearchDetail from "./pages/ResearchDetail";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="contacts/:id" element={<ContactDetail />} />
         <Route path="apollo" element={<Navigate to="/research" replace />} />
         <Route path="research" element={<MarketResearch />} />
+        <Route path="research/:searchId/companies/:resultId" element={<ResearchCompanyDetail />} />
         <Route path="research/:id" element={<ResearchDetail />} />
         <Route
           path="settings"

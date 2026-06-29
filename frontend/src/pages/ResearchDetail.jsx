@@ -36,16 +36,19 @@ const PEOPLE_COLUMNS = [
   { key: "linkedin_url", label: "LinkedIn" },
 ];
 
-function CellValue({ column, row, isOrg }) {
+function CellValue({ column, row, isOrg, searchId }) {
   const value = row[column.key];
   if (value === null || value === undefined || value === "") return "—";
 
   if (column.key === "name" && isOrg) {
     return (
-      <div className="flex items-center gap-3">
+      <Link
+        to={`/research/${searchId}/companies/${row.id}`}
+        className="flex items-center gap-3 hover:text-brand-600"
+      >
         <CompanyLogo domain={row.domain} name={value} size={32} />
         <span className="font-medium text-ink-900">{value}</span>
-      </div>
+      </Link>
     );
   }
 
@@ -271,6 +274,8 @@ export default function ResearchDetail() {
   const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchId = search?.criteria?._source_search_id;
   const sourceSearchName = search?.criteria?._source_search_name;
+  const sourceCompanyResultId = search?.criteria?._source_company_result_id;
+  const sourceCompanyName = search?.criteria?._source_company_name;
   const allOnPageSelected = data?.items?.length > 0 && data.items.every((row) => selected.has(row.id));
 
   return (
@@ -291,6 +296,17 @@ export default function ResearchDetail() {
               <Link to={`/research/${sourceSearchId}`} className="font-medium text-brand-600 hover:underline">
                 {sourceSearchName || `#${sourceSearchId}`}
               </Link>
+              {sourceCompanyResultId ? (
+                <>
+                  {" · "}
+                  <Link
+                    to={`/research/${sourceSearchId}/companies/${sourceCompanyResultId}`}
+                    className="font-medium text-brand-600 hover:underline"
+                  >
+                    {sourceCompanyName || "Company"}
+                  </Link>
+                </>
+              ) : null}
             </p>
           ) : null}
           <p className="mt-1 text-xs text-ink-400">
@@ -385,7 +401,7 @@ export default function ResearchDetail() {
                       </td>
                       {columns.map((col) => (
                         <td key={col.key} className="table-td">
-                          <CellValue column={col} row={row} isOrg={isOrg} />
+                          <CellValue column={col} row={row} isOrg={isOrg} searchId={id} />
                         </td>
                       ))}
                       <td className="table-td">

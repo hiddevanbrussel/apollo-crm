@@ -59,3 +59,15 @@ class ResearchEnrichResult(BaseModel):
     failed: int = 0
     total: int = 0
     errors: list[str] = []
+
+
+class ResearchResultDetail(BaseModel):
+    id: int
+    search_id: int
+    search_name: str
+    query_type: str
+    enriched: bool = False
+    apollo_id: str | None = None
+    name: str | None = None
+    fields: dict[str, Any] = {}
+    raw_data: dict[str, Any] = {}

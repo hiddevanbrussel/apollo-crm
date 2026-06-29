@@ -14,6 +14,7 @@ from app.schemas.research import (
     ResearchEnrichRequest,
     ResearchEnrichResult,
     ResearchPeopleFromCompanies,
+    ResearchResultDetail,
     ResearchResultsPage,
     ResearchSearchList,
     ResearchSearchOut,
@@ -147,6 +148,56 @@ def create_people_from_company_search(
     except ApolloError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
     return _detail(db, search)
+
+
+def _get_result_or_404(db: Session, search_id: int, result_id: int) -> tuple[ResearchSearch, ResearchResult]:
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    result = db.get(ResearchResult, result_id)
+    if not result or result.search_id != search_id:
+        raise HTTPException(status_code=404, detail="Research result not found.")
+    return search, result
+
+
+@router.get("/searches/{search_id}/results/{result_id}", response_model=ResearchResultDetail)
+def get_search_result(
+    search_id: int,
+    result_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search, result = _get_result_or_404(db, search_id, result_id)
+    if search.query_type != "organizations":
+        raise HTTPException(status_code=400, detail="Company detail is only available for company research.")
+    return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
+@router.post("/searches/{search_id}/results/{result_id}/people", response_model=ResearchDetail)
+def create_people_from_company_result(
+    search_id: int,
+    result_id: int,
+    payload: ResearchPeopleFromCompanies,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    search, result = _get_result_or_404(db, search_id, result_id)
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+    try:
+        people_search = research_service.run_people_for_company_result(
+            db,
+            client,
+            parent_search=search,
+            company_result=result,
+            name=payload.name.strip(),
+            criteria=payload.criteria,
+            max_records=payload.max_records,
+            created_by=user.id,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
+    return _detail(db, people_search)
 
 
 @router.post("/searches/{search_id}/results/{result_id}/enrich")
