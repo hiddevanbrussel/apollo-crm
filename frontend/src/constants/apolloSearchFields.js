@@ -216,6 +216,12 @@ export const PEOPLE_FILTER_FIELDS = [
   },
 ];
 
+/** People filters when searching contacts within a saved company research (domains are automatic). */
+
+export const PEOPLE_CONTACT_FIELDS = PEOPLE_FILTER_FIELDS.filter(
+  (field) => !["organization_domains", "organization_ids"].includes(field.key)
+);
+
 export function emptyFilters(fields) {
   return Object.fromEntries(fields.map((f) => [f.key, f.type === "boolean" ? "" : ""]));
 }
@@ -250,6 +256,11 @@ export function buildCriteria(filters, fields) {
     if (field.type === "number") {
       const num = Number(value);
       if (!Number.isNaN(num)) out[field.key] = num;
+      continue;
+    }
+
+    if (field.type === "ranges") {
+      out[field.key] = value;
       continue;
     }
 

@@ -11,6 +11,7 @@ from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
     ResearchCreate,
     ResearchDetail,
+    ResearchPeopleFromCompanies,
     ResearchResultsPage,
     ResearchSearchList,
     ResearchSearchOut,
@@ -112,6 +113,38 @@ def list_search_domains(
             seen.add(domain)
             domains.append(domain)
     return {"domains": domains}
+
+
+@router.post("/searches/{search_id}/people", response_model=ResearchDetail)
+def create_people_from_company_search(
+    search_id: int,
+    payload: ResearchPeopleFromCompanies,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    parent = db.get(ResearchSearch, search_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    if parent.query_type != "organizations":
+        raise HTTPException(
+            status_code=400,
+            detail="Contact search can only be started from a company research dataset.",
+        )
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+    try:
+        search = research_service.run_people_for_company_search(
+            db,
+            client,
+            parent_search=parent,
+            name=payload.name.strip(),
+            criteria=payload.criteria,
+            max_records=payload.max_records,
+            created_by=user.id,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
+    return _detail(db, search)
 
 
 @router.get("/searches/{search_id}/results", response_model=ResearchResultsPage)

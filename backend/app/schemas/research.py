@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -7,6 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 class ResearchCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     query_type: str  # 'people' | 'organizations'
+    criteria: dict[str, Any] = {}
+    max_records: int = Field(default=500, ge=1, le=2000)
+
+
+class ResearchPeopleFromCompanies(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
     criteria: dict[str, Any] = {}
     max_records: int = Field(default=500, ge=1, le=2000)
 

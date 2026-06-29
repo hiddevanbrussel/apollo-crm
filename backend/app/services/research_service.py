@@ -11,6 +11,7 @@ import io
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ResearchResult, ResearchSearch, SearchHistory
@@ -22,6 +23,7 @@ logger = logging.getLogger("research.service")
 
 MAX_RECORDS_CAP = 2000
 PAGE_SIZE = 100
+DOMAIN_BATCH_SIZE = 1000
 
 ORG_COLUMNS = [
     "name",
@@ -85,20 +87,40 @@ def _display_name(query_type: str, raw: dict[str, Any]) -> str | None:
     ) or None
 
 
-def run_and_store(
-    db: Session,
+def domains_from_company_search(db: Session, search: ResearchSearch) -> list[str]:
+    """Unique domains from a saved company research snapshot."""
+    if search.query_type != "organizations":
+        return []
+
+    rows = (
+        db.execute(
+            select(ResearchResult)
+            .where(ResearchResult.search_id == search.id)
+            .order_by(ResearchResult.id)
+        )
+        .scalars()
+        .all()
+    )
+
+    domains: list[str] = []
+    seen: set[str] = set()
+    for result in rows:
+        row = _flatten_org(result.raw_data or {})
+        domain = (row.get("domain") or "").strip().lower()
+        if domain and domain not in seen:
+            seen.add(domain)
+            domains.append(domain)
+    return domains
+
+
+def _collect_from_apollo(
     client: ApolloService,
     *,
-    name: str,
     query_type: str,
     criteria: dict[str, Any],
     max_records: int,
-    created_by: int | None,
-) -> ResearchSearch:
-    """Run a paginated Apollo search and persist the snapshot. Consumes credits."""
-    if query_type not in ("organizations", "people"):
-        raise ApolloError("Unknown search type.", status_code=400)
-
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Paginate an Apollo search until ``max_records`` unique rows are collected."""
     max_records = max(1, min(max_records, MAX_RECORDS_CAP))
     per_page = min(PAGE_SIZE, max_records)
 
@@ -141,6 +163,19 @@ def run_and_store(
             break
         page += 1
 
+    return collected, total_available
+
+
+def _persist_search(
+    db: Session,
+    *,
+    name: str,
+    query_type: str,
+    criteria: dict[str, Any],
+    collected: list[dict[str, Any]],
+    total_available: int | None,
+    created_by: int | None,
+) -> ResearchSearch:
     entity_type = "company" if query_type == "organizations" else "person"
     search = ResearchSearch(
         name=name,
@@ -175,6 +210,106 @@ def run_and_store(
     db.commit()
     db.refresh(search)
     return search
+
+
+def run_people_for_company_search(
+    db: Session,
+    client: ApolloService,
+    *,
+    parent_search: ResearchSearch,
+    name: str,
+    criteria: dict[str, Any],
+    max_records: int,
+    created_by: int | None,
+) -> ResearchSearch:
+    """Find people at companies from a saved company research, with extra people filters."""
+    if parent_search.query_type != "organizations":
+        raise ApolloError("People search can only be run from company research.", status_code=400)
+
+    domains = domains_from_company_search(db, parent_search)
+    if not domains:
+        raise ApolloError(
+            "This company research has no domains to search people for.",
+            status_code=400,
+        )
+
+    max_records = max(1, min(max_records, MAX_RECORDS_CAP))
+    people_criteria = {k: v for k, v in criteria.items() if not str(k).startswith("_")}
+    stored_criteria = {
+        **people_criteria,
+        "_source_search_id": parent_search.id,
+        "_source_search_name": parent_search.name,
+        "organization_domains": domains,
+    }
+
+    collected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    total_available: int | None = None
+
+    for batch_start in range(0, len(domains), DOMAIN_BATCH_SIZE):
+        if len(collected) >= max_records:
+            break
+        batch_domains = domains[batch_start : batch_start + DOMAIN_BATCH_SIZE]
+        batch_criteria = {**people_criteria, "organization_domains": batch_domains}
+        batch_collected, batch_total = _collect_from_apollo(
+            client,
+            query_type="people",
+            criteria=batch_criteria,
+            max_records=max_records - len(collected),
+        )
+        if batch_total is not None:
+            total_available = (total_available or 0) + batch_total
+
+        for raw in batch_collected:
+            apollo_id = raw.get("id")
+            key = apollo_id or f"_idx{len(collected)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(raw)
+            if len(collected) >= max_records:
+                break
+
+    return _persist_search(
+        db,
+        name=name,
+        query_type="people",
+        criteria=stored_criteria,
+        collected=collected,
+        total_available=total_available,
+        created_by=created_by,
+    )
+
+
+def run_and_store(
+    db: Session,
+    client: ApolloService,
+    *,
+    name: str,
+    query_type: str,
+    criteria: dict[str, Any],
+    max_records: int,
+    created_by: int | None,
+) -> ResearchSearch:
+    """Run a paginated Apollo search and persist the snapshot."""
+    if query_type not in ("organizations", "people"):
+        raise ApolloError("Unknown search type.", status_code=400)
+
+    collected, total_available = _collect_from_apollo(
+        client,
+        query_type=query_type,
+        criteria=criteria,
+        max_records=max_records,
+    )
+    return _persist_search(
+        db,
+        name=name,
+        query_type=query_type,
+        criteria=criteria,
+        collected=collected,
+        total_available=total_available,
+        created_by=created_by,
+    )
 
 
 def export_csv(search: ResearchSearch, results: list[ResearchResult]) -> str:

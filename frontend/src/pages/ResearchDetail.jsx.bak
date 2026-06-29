@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
-import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, Modal, PageLoader, Pagination, Spinner } from "../components/ui";
-import {
-  PEOPLE_CONTACT_FIELDS,
-  buildCriteria,
-  emptyFilters,
-  slug,
-} from "../constants/apolloSearchFields";
+import { CompanyLogo, EmptyState, PageLoader, Pagination } from "../components/ui";
+import { slug } from "../constants/apolloSearchFields";
 import { useToast } from "../context/ToastContext";
 
 const ORG_COLUMNS = [
@@ -68,13 +62,6 @@ export default function ResearchDetail() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
-  const [showContacts, setShowContacts] = useState(false);
-  const [domainInfo, setDomainInfo] = useState(null);
-  const [contactName, setContactName] = useState("");
-  const [contactMaxRecords, setContactMaxRecords] = useState(500);
-  const [contactFilters, setContactFilters] = useState(() => emptyFilters(PEOPLE_CONTACT_FIELDS));
-  const [runningContacts, setRunningContacts] = useState(false);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -124,64 +111,29 @@ export default function ResearchDetail() {
     }
   };
 
-  const openContactsModal = async () => {
+  const startPeopleSearch = async () => {
     try {
       const { data: res } = await api.get(`/research/searches/${id}/domains`);
       const domains = res.domains || [];
       if (!domains.length) {
-        toast.info("No domains in this dataset to search contacts for.");
+        toast.info("No domains in this dataset to search people for.");
         return;
       }
-      setDomainInfo({
-        companyCount: data?.search?.result_count || domains.length,
-        domainCount: domains.length,
+      navigate("/research", {
+        state: {
+          mode: "people",
+          prefilled: { organization_domains: domains.slice(0, 1000).join(", ") },
+          name: `${data.search.name} — contacts`,
+        },
       });
-      setContactName(`${data?.search?.name || "Research"} — contacts`);
-      setContactFilters(emptyFilters(PEOPLE_CONTACT_FIELDS));
-      setShowContacts(true);
     } catch (err) {
       toast.error(apiError(err));
-    }
-  };
-
-  const runContactSearch = async (e) => {
-    e?.preventDefault();
-    if (!contactName.trim()) {
-      toast.info("Give this contact search a name first.");
-      return;
-    }
-    if (
-      !confirm(
-        `Search contacts at ${domainInfo?.domainCount || 0} companies and save up to ${contactMaxRecords} records? People API Search does not consume credits.`
-      )
-    ) {
-      return;
-    }
-
-    setRunningContacts(true);
-    try {
-      const { data: created } = await api.post(`/research/searches/${id}/people`, {
-        name: contactName.trim(),
-        criteria: buildCriteria(contactFilters, PEOPLE_CONTACT_FIELDS),
-        max_records: Number(contactMaxRecords),
-      });
-      toast.success(
-        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
-      );
-      setShowContacts(false);
-      navigate(`/research/${created.id}`);
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setRunningContacts(false);
     }
   };
 
   const search = data?.search;
   const isOrg = search?.query_type === "organizations";
   const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
-  const sourceSearchId = search?.criteria?._source_search_id;
-  const sourceSearchName = search?.criteria?._source_search_name;
 
   return (
     <div className="space-y-5">
@@ -195,19 +147,15 @@ export default function ResearchDetail() {
             {isOrg ? "Companies" : "People"} · {search?.result_count ?? 0} records captured
             {search?.total_available ? ` of ${search.total_available} available` : ""}
           </p>
-          {sourceSearchId ? (
-            <p className="mt-1 text-sm text-ink-500">
-              Based on company research{" "}
-              <Link to={`/research/${sourceSearchId}`} className="font-medium text-brand-600 hover:underline">
-                {sourceSearchName || `#${sourceSearchId}`}
-              </Link>
-            </p>
-          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isOrg && (
-            <button className="btn-primary" onClick={openContactsModal} title="Find contacts at these companies">
-              <Icon.Users width={18} height={18} /> Find contacts
+            <button
+              className="btn-secondary"
+              onClick={startPeopleSearch}
+              title="Start a people search using domains from this dataset"
+            >
+              <Icon.Users width={18} height={18} /> Find people
             </button>
           )}
           <button className="btn-secondary" onClick={() => exportSearch("csv")}>
@@ -259,57 +207,6 @@ export default function ResearchDetail() {
           </>
         )}
       </div>
-
-      <Modal
-        open={showContacts}
-        onClose={() => !runningContacts && setShowContacts(false)}
-        title="Find contacts at these companies"
-        wide
-        footer={
-          <>
-            <button className="btn-secondary" onClick={() => setShowContacts(false)} disabled={runningContacts}>
-              Cancel
-            </button>
-            <button className="btn-primary" onClick={runContactSearch} disabled={runningContacts}>
-              {runningContacts ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Search width={18} height={18} />}
-              Run & save
-            </button>
-          </>
-        }
-      >
-        <form onSubmit={runContactSearch} className="space-y-4">
-          <div className="rounded-lg border border-brand-100 bg-brand-50/50 px-4 py-3 text-sm text-ink-600">
-            Searches contacts only at the <strong>{domainInfo?.domainCount ?? 0}</strong> domains from this company
-            research ({domainInfo?.companyCount ?? 0} companies). Add filters below to narrow by title, seniority,
-            location, and more.
-          </div>
-
-          <ApolloFilterForm
-            fields={PEOPLE_CONTACT_FIELDS}
-            values={contactFilters}
-            onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
-          />
-
-          <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
-            <Field label="Research name *">
-              <input className="input" value={contactName} onChange={(e) => setContactName(e.target.value)} />
-            </Field>
-            <Field label="Max records">
-              <select
-                className="input"
-                value={contactMaxRecords}
-                onChange={(e) => setContactMaxRecords(Number(e.target.value))}
-              >
-                <option value={100}>100</option>
-                <option value={250}>250</option>
-                <option value={500}>500</option>
-                <option value={1000}>1,000</option>
-                <option value={2000}>2,000</option>
-              </select>
-            </Field>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }
