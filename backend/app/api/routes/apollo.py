@@ -120,7 +120,7 @@ def search_people(
     _ensure_enabled(db)
     client = build_client(db)
     try:
-        response = client.search_people(filters.model_dump(exclude_none=True))
+        response = client.search_people_api(filters.model_dump(exclude_none=True))
     except ApolloError as exc:
         _handle_apollo_error(exc)
 

@@ -197,11 +197,12 @@ export function Modal({ open, onClose, title, children, footer, wide = false }) 
   );
 }
 
-export function Field({ label, children }) {
+export function Field({ label, children, hint }) {
   return (
     <div>
       <label className="label">{label}</label>
       {children}
+      {hint ? <p className="mt-1 text-xs text-ink-400">{hint}</p> : null}
     </div>
   );
 }

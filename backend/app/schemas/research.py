@@ -31,3 +31,12 @@ class ResearchSearchList(BaseModel):
 class ResearchDetail(ResearchSearchOut):
     columns: list[str] = []
     rows: list[dict[str, Any]] = []
+
+
+class ResearchResultsPage(BaseModel):
+    search: ResearchSearchOut
+    columns: list[str] = []
+    items: list[dict[str, Any]] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20

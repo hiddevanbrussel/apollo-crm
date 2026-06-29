@@ -8,7 +8,6 @@ import { Icon } from "./icons";
 
 const NAV_MAIN = [
   { to: "/", label: "Dashboard", icon: Icon.Dashboard, end: true },
-  { to: "/apollo", label: "Apollo Search", icon: Icon.Search },
   { to: "/research", label: "Market Research", icon: Icon.Compass },
 ];
 

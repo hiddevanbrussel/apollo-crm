@@ -2,7 +2,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -11,6 +11,7 @@ from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
     ResearchCreate,
     ResearchDetail,
+    ResearchResultsPage,
     ResearchSearchList,
     ResearchSearchOut,
 )
@@ -87,6 +88,74 @@ def list_searches(db: Session = Depends(get_db), _: User = Depends(get_current_u
         .all()
     )
     return ResearchSearchList(items=[ResearchSearchOut.model_validate(r) for r in rows])
+
+
+@router.get("/searches/{search_id}/domains")
+def list_search_domains(
+    search_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    if search.query_type != "organizations":
+        raise HTTPException(status_code=400, detail="Domains are only available for company research.")
+
+    results = _get_results(db, search.id)
+    domains: list[str] = []
+    seen: set[str] = set()
+    for result in results:
+        row = research_service.flatten("organizations", result.raw_data or {})
+        domain = (row.get("domain") or "").strip().lower()
+        if domain and domain not in seen:
+            seen.add(domain)
+            domains.append(domain)
+    return {"domains": domains}
+
+
+@router.get("/searches/{search_id}/results", response_model=ResearchResultsPage)
+def list_search_results(
+    search_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+
+    total = (
+        db.execute(
+            select(func.count())
+            .select_from(ResearchResult)
+            .where(ResearchResult.search_id == search_id)
+        ).scalar_one()
+        or 0
+    )
+    offset = (page - 1) * page_size
+    results = (
+        db.execute(
+            select(ResearchResult)
+            .where(ResearchResult.search_id == search_id)
+            .order_by(ResearchResult.id)
+            .offset(offset)
+            .limit(page_size)
+        )
+        .scalars()
+        .all()
+    )
+    cols = research_service.columns_for(search.query_type)
+    items = [research_service.flatten(search.query_type, r.raw_data or {}) for r in results]
+    return ResearchResultsPage(
+        search=ResearchSearchOut.model_validate(search),
+        columns=cols,
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/searches/{search_id}", response_model=ResearchDetail)

@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from app.core.crypto import mask_api_key
+from app.services.apollo_filters import normalize_search_payload
 
 logger = logging.getLogger("apollo.service")
 
@@ -124,13 +125,13 @@ class ApolloService:
 
     # -- public API ----------------------------------------------------------
     def search_people(self, filters: dict[str, Any]) -> dict[str, Any]:
-        """Search for people. Returns raw Apollo response."""
-        payload = self._clean(filters)
+        """Search for people (legacy endpoint). Returns raw Apollo response."""
+        payload = self._clean(normalize_search_payload(filters))
         return self._post("/api/v1/mixed_people/search", payload)
 
     def search_people_api(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Search people via /api/v1/mixed_people/api_search. Returns raw response."""
-        payload = self._clean(filters)
+        payload = self._clean(normalize_search_payload(filters))
         return self._post("/api/v1/mixed_people/api_search", payload)
 
     def search_people_by_domains(
@@ -153,7 +154,7 @@ class ApolloService:
 
     def search_organizations(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Search for organizations. Returns raw Apollo response."""
-        payload = self._clean(filters)
+        payload = self._clean(normalize_search_payload(filters))
         return self._post("/api/v1/mixed_companies/search", payload)
 
     def enrich_person(self, data: dict[str, Any]) -> dict[str, Any]:

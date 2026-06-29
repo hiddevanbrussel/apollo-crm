@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import ResearchResult, ResearchSearch, SearchHistory
+from app.services.apollo_filters import normalize_search_payload
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError, ApolloService
 
@@ -107,14 +108,15 @@ def run_and_store(
     page = 1
 
     while len(collected) < max_records:
-        payload = {k: v for k, v in criteria.items() if v not in (None, "", [])}
+        payload = normalize_search_payload(criteria)
+        payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
         payload["page"] = page
         payload["per_page"] = per_page
         if query_type == "organizations":
             response = client.search_organizations(payload)
             batch = response.get("organizations") or response.get("accounts") or []
         else:
-            response = client.search_people(payload)
+            response = client.search_people_api(payload)
             batch = response.get("people") or response.get("contacts") or []
 
         pagination = response.get("pagination") or {}
