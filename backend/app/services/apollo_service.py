@@ -10,7 +10,9 @@ Endpoints used (official Apollo API):
   - People enrichment      : POST /api/v1/people/match
   - Bulk people enrichment : POST /api/v1/people/bulk_match
   - Organization enrichment: POST /api/v1/organizations/enrich
-  - User profile / credits  : GET /api/v1/users/api_profile
+  - Complete person info      : GET  /api/v1/people/{id}
+  - Complete organization info: GET  /api/v1/organizations/{id}
+  - User profile / credits      : GET /api/v1/users/api_profile
 """
 
 from __future__ import annotations
@@ -151,6 +153,12 @@ class ApolloService:
         if not person_id:
             raise ApolloError("A person id is required.", status_code=400)
         return self._get(f"/api/v1/people/{person_id}", {})
+
+    def get_organization(self, organization_id: str) -> dict[str, Any]:
+        """Fetch complete organization details via GET /api/v1/organizations/{id}."""
+        if not organization_id:
+            raise ApolloError("An organization id is required.", status_code=400)
+        return self._get(f"/api/v1/organizations/{organization_id}", {})
 
     def search_organizations(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Search for organizations. Returns raw Apollo response."""

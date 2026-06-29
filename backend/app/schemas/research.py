@@ -46,3 +46,16 @@ class ResearchResultsPage(BaseModel):
     total: int = 0
     page: int = 1
     page_size: int = 20
+
+
+class ResearchEnrichRequest(BaseModel):
+    result_ids: list[int] = Field(default_factory=list)
+    all_unenriched: bool = False
+
+
+class ResearchEnrichResult(BaseModel):
+    enriched: int = 0
+    skipped: int = 0
+    failed: int = 0
+    total: int = 0
+    errors: list[str] = []

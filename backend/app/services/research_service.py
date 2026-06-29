@@ -79,7 +79,7 @@ def flatten(query_type: str, raw: dict[str, Any]) -> dict[str, Any]:
     return _flatten_org(raw) if query_type == "organizations" else _flatten_person(raw)
 
 
-def _display_name(query_type: str, raw: dict[str, Any]) -> str | None:
+def display_name(query_type: str, raw: dict[str, Any]) -> str | None:
     if query_type == "organizations":
         return raw.get("name")
     return raw.get("name") or " ".join(
@@ -194,7 +194,7 @@ def _persist_search(
                 search_id=search.id,
                 entity_type=entity_type,
                 apollo_id=raw.get("id"),
-                name=_display_name(query_type, raw),
+                name=display_name(query_type, raw),
                 raw_data=raw,
             )
         )
@@ -310,6 +310,121 @@ def run_and_store(
         total_available=total_available,
         created_by=created_by,
     )
+
+
+MAX_BULK_ENRICH = 100
+
+
+def is_enriched(raw: dict[str, Any] | None) -> bool:
+    return bool((raw or {}).get("_research_enriched"))
+
+
+def _mark_enriched(entity: dict[str, Any]) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    marked = dict(entity)
+    marked["_research_enriched"] = True
+    marked["_research_enriched_at"] = datetime.now(timezone.utc).isoformat()
+    return marked
+
+
+def _apollo_id_for_result(result: ResearchResult) -> str | None:
+    raw = result.raw_data or {}
+    apollo_id = (result.apollo_id or raw.get("id") or "").strip()
+    return apollo_id or None
+
+
+def result_item(result: ResearchResult, query_type: str) -> dict[str, Any]:
+    row = flatten(query_type, result.raw_data or {})
+    row["id"] = result.id
+    row["enriched"] = is_enriched(result.raw_data)
+    return row
+
+
+def enrich_result_record(
+    client: ApolloService,
+    result: ResearchResult,
+    *,
+    query_type: str,
+) -> dict[str, Any]:
+    """Fetch complete Apollo profile and return updated raw payload."""
+    apollo_id = _apollo_id_for_result(result)
+    if not apollo_id:
+        raise ApolloError("This record has no Apollo id.", status_code=400)
+
+    if query_type == "people":
+        response = client.get_person(apollo_id)
+        entity = response.get("person") or {}
+    else:
+        response = client.get_organization(apollo_id)
+        entity = response.get("organization") or response.get("account") or {}
+
+    if not entity:
+        raise ApolloError("Apollo returned no profile details.", status_code=502)
+
+    return _mark_enriched(entity)
+
+
+def enrich_results(
+    db: Session,
+    client: ApolloService,
+    search: ResearchSearch,
+    *,
+    result_ids: list[int] | None = None,
+    all_unenriched: bool = False,
+) -> dict[str, Any]:
+    """Enrich one or more research records via Apollo complete-info endpoints."""
+    stmt = select(ResearchResult).where(ResearchResult.search_id == search.id)
+    if result_ids:
+        stmt = stmt.where(ResearchResult.id.in_(result_ids))
+    rows = db.execute(stmt.order_by(ResearchResult.id)).scalars().all()
+
+    if all_unenriched:
+        rows = [row for row in rows if not is_enriched(row.raw_data)]
+
+    if result_ids and not all_unenriched:
+        found_ids = {row.id for row in rows}
+        missing = [rid for rid in result_ids if rid not in found_ids]
+        if missing:
+            raise ApolloError(f"Unknown result ids for this search: {missing[:5]}", status_code=404)
+
+    limit = MAX_RECORDS_CAP if all_unenriched else MAX_BULK_ENRICH
+    if len(rows) > limit:
+        raise ApolloError(
+            f"Enrich at most {limit} records per request.",
+            status_code=400,
+        )
+
+    enriched = 0
+    skipped = 0
+    failed = 0
+    errors: list[str] = []
+
+    for row in rows:
+        if not all_unenriched and result_ids and is_enriched(row.raw_data):
+            skipped += 1
+            continue
+        try:
+            payload = enrich_result_record(client, row, query_type=search.query_type)
+        except ApolloError as exc:
+            failed += 1
+            label = row.name or row.apollo_id or str(row.id)
+            errors.append(f"{label}: {exc.message}")
+            continue
+
+        row.raw_data = payload
+        row.apollo_id = payload.get("id") or row.apollo_id
+        row.name = display_name(search.query_type, payload) or row.name
+        enriched += 1
+
+    db.commit()
+    return {
+        "enriched": enriched,
+        "skipped": skipped,
+        "failed": failed,
+        "total": len(rows),
+        "errors": errors[:20],
+    }
 
 
 def export_csv(search: ResearchSearch, results: list[ResearchResult]) -> str:

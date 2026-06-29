@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, Modal, PageLoader, Pagination, Spinner } from "../components/ui";
+import { CompanyLogo, EmptyState, Field, Modal, PageLoader, Pagination, Spinner, StatusBadge } from "../components/ui";
 import {
   PEOPLE_CONTACT_FIELDS,
   buildCriteria,
@@ -26,6 +26,8 @@ const ORG_COLUMNS = [
 const PEOPLE_COLUMNS = [
   { key: "name", label: "Name" },
   { key: "title", label: "Title" },
+  { key: "email", label: "Email" },
+  { key: "phone", label: "Phone" },
   { key: "seniority", label: "Seniority" },
   { key: "organization_name", label: "Company" },
   { key: "organization_domain", label: "Domain" },
@@ -75,6 +77,11 @@ export default function ResearchDetail() {
   const [contactFilters, setContactFilters] = useState(() => emptyFilters(PEOPLE_CONTACT_FIELDS));
   const [runningContacts, setRunningContacts] = useState(false);
 
+  const [apolloReady, setApolloReady] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [enriching, setEnriching] = useState(false);
+  const [enrichingId, setEnrichingId] = useState(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -93,6 +100,17 @@ export default function ResearchDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    api
+      .get("/apollo/status")
+      .then((res) => setApolloReady(res.data.enabled && res.data.configured))
+      .catch(() => setApolloReady(false));
+  }, []);
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [page, id]);
 
   const exportSearch = async (format) => {
     try {
@@ -177,11 +195,83 @@ export default function ResearchDetail() {
     }
   };
 
+  const toggleOne = (rowId) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(rowId) ? next.delete(rowId) : next.add(rowId);
+      return next;
+    });
+
+  const toggleAllOnPage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const ids = (data?.items || []).map((row) => row.id);
+      const all = ids.length > 0 && ids.every((rowId) => next.has(rowId));
+      ids.forEach((rowId) => (all ? next.delete(rowId) : next.add(rowId)));
+      return next;
+    });
+
+  const clearSelection = () => setSelected(new Set());
+
+  const enrichOne = async (rowId) => {
+    if (!confirm("Fetch complete profile from Apollo? This may consume credits.")) return;
+    setEnrichingId(rowId);
+    try {
+      await api.post(`/research/searches/${id}/results/${rowId}/enrich`);
+      toast.success("Record enriched.");
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnrichingId(null);
+    }
+  };
+
+  const enrichSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!confirm(`Enrich ${ids.length} selected record(s) via Apollo? This may consume credits.`)) return;
+    setEnriching(true);
+    try {
+      const { data: res } = await api.post(`/research/searches/${id}/enrich`, { result_ids: ids });
+      const parts = [`${res.enriched} enriched`];
+      if (res.skipped) parts.push(`${res.skipped} skipped`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      toast.success(parts.join(" · "));
+      if (res.errors?.length) toast.info(res.errors.slice(0, 3).join(" · "));
+      clearSelection();
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const enrichAllUnenriched = async () => {
+    if (!confirm("Enrich all records in this dataset that are not yet enriched? This may consume many Apollo credits.")) return;
+    setEnriching(true);
+    try {
+      const { data: res } = await api.post(`/research/searches/${id}/enrich`, { all_unenriched: true });
+      const parts = [`${res.enriched} enriched`];
+      if (res.skipped) parts.push(`${res.skipped} skipped`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      toast.success(parts.join(" · "));
+      if (res.errors?.length) toast.info(res.errors.slice(0, 3).join(" · "));
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnriching(false);
+    }
+  };
+
   const search = data?.search;
   const isOrg = search?.query_type === "organizations";
   const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchId = search?.criteria?._source_search_id;
   const sourceSearchName = search?.criteria?._source_search_name;
+  const allOnPageSelected = data?.items?.length > 0 && data.items.every((row) => selected.has(row.id));
 
   return (
     <div className="space-y-5">
@@ -203,6 +293,10 @@ export default function ResearchDetail() {
               </Link>
             </p>
           ) : null}
+          <p className="mt-1 text-xs text-ink-400">
+            Optional: enrich records via Apollo complete profile APIs (
+            {isOrg ? "organizations" : "people"}). This may consume credits and requires a master API key.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isOrg && (
@@ -210,6 +304,15 @@ export default function ResearchDetail() {
               <Icon.Users width={18} height={18} /> Find contacts
             </button>
           )}
+          <button
+            className="btn-secondary"
+            onClick={enrichAllUnenriched}
+            disabled={enriching || !apolloReady}
+            title={apolloReady ? undefined : "Enable Apollo in Settings to enrich."}
+          >
+            {enriching ? <Spinner className="h-4 w-4" /> : <Icon.Bolt width={18} height={18} />}
+            Enrich all
+          </button>
           <button className="btn-secondary" onClick={() => exportSearch("csv")}>
             <Icon.Download width={18} height={18} /> CSV
           </button>
@@ -223,6 +326,20 @@ export default function ResearchDetail() {
       </div>
 
       <div className="card">
+        {selected.size > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-brand-50/60 px-4 py-3">
+            <span className="text-sm font-medium text-ink-700">{selected.size} selected</span>
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost text-sm text-ink-500" onClick={clearSelection}>
+                Clear selection
+              </button>
+              <button className="btn-primary" onClick={enrichSelected} disabled={enriching || !apolloReady}>
+                {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Bolt width={18} height={18} />}
+                Enrich selected
+              </button>
+            </div>
+          </div>
+        )}
         {loading ? (
           <PageLoader />
         ) : !data?.items?.length ? (
@@ -233,21 +350,60 @@ export default function ResearchDetail() {
               <table className="w-full">
                 <thead className="border-b border-ink-100 bg-ink-50/50">
                   <tr>
+                    <th className="table-th w-10">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+                        checked={allOnPageSelected}
+                        onChange={toggleAllOnPage}
+                        aria-label="Select all on this page"
+                      />
+                    </th>
+                    <th className="table-th">Status</th>
                     {columns.map((col) => (
                       <th key={col.key} className="table-th">
                         {col.label}
                       </th>
                     ))}
+                    <th className="table-th"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-100">
-                  {data.items.map((row, i) => (
-                    <tr key={i} className="hover:bg-ink-50/60">
+                  {data.items.map((row) => (
+                    <tr key={row.id} className="hover:bg-ink-50/60">
+                      <td className="table-td">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+                          checked={selected.has(row.id)}
+                          onChange={() => toggleOne(row.id)}
+                          aria-label={`Select ${row.name || row.id}`}
+                        />
+                      </td>
+                      <td className="table-td">
+                        <StatusBadge status={row.enriched ? "enriched" : "none"} />
+                      </td>
                       {columns.map((col) => (
                         <td key={col.key} className="table-td">
                           <CellValue column={col} row={row} isOrg={isOrg} />
                         </td>
                       ))}
+                      <td className="table-td">
+                        {!row.enriched && (
+                          <button
+                            className="btn-ghost px-2 py-1 text-sm"
+                            onClick={() => enrichOne(row.id)}
+                            disabled={!apolloReady || enrichingId === row.id}
+                            title="Fetch complete Apollo profile"
+                          >
+                            {enrichingId === row.id ? (
+                              <Spinner className="h-4 w-4" />
+                            ) : (
+                              <Icon.Bolt width={15} height={15} />
+                            )}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

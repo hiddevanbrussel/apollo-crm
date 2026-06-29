@@ -11,6 +11,8 @@ from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
     ResearchCreate,
     ResearchDetail,
+    ResearchEnrichRequest,
+    ResearchEnrichResult,
     ResearchPeopleFromCompanies,
     ResearchResultsPage,
     ResearchSearchList,
@@ -147,6 +149,67 @@ def create_people_from_company_search(
     return _detail(db, search)
 
 
+@router.post("/searches/{search_id}/results/{result_id}/enrich")
+def enrich_search_result(
+    search_id: int,
+    result_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    result = db.get(ResearchResult, result_id)
+    if not result or result.search_id != search_id:
+        raise HTTPException(status_code=404, detail="Research result not found.")
+
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+    try:
+        payload = research_service.enrich_result_record(
+            client, result, query_type=search.query_type
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
+
+    result.raw_data = payload
+    result.apollo_id = payload.get("id") or result.apollo_id
+    result.name = research_service.display_name(search.query_type, payload) or result.name
+    db.commit()
+    db.refresh(result)
+    return research_service.result_item(result, search.query_type)
+
+
+@router.post("/searches/{search_id}/enrich", response_model=ResearchEnrichResult)
+def enrich_search_results(
+    search_id: int,
+    payload: ResearchEnrichRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    if not payload.result_ids and not payload.all_unenriched:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide result_ids or set all_unenriched to true.",
+        )
+
+    _ensure_apollo_enabled(db)
+    client = build_client(db)
+    try:
+        return research_service.enrich_results(
+            db,
+            client,
+            search,
+            result_ids=payload.result_ids or None,
+            all_unenriched=payload.all_unenriched,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
+
+
 @router.get("/searches/{search_id}/results", response_model=ResearchResultsPage)
 def list_search_results(
     search_id: int,
@@ -180,7 +243,7 @@ def list_search_results(
         .all()
     )
     cols = research_service.columns_for(search.query_type)
-    items = [research_service.flatten(search.query_type, r.raw_data or {}) for r in results]
+    items = [research_service.result_item(r, search.query_type) for r in results]
     return ResearchResultsPage(
         search=ResearchSearchOut.model_validate(search),
         columns=cols,
