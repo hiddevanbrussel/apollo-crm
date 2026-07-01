@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, Modal, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, EmptyState, Field, IconLink, Modal, PageLoader, SourceBadge, Spinner, StatusBadge, normalizeExternalHref } from "../components/ui";
 import {
   PEOPLE_CONTACT_FIELDS,
   buildCriteria,
@@ -11,12 +11,16 @@ import {
 } from "../constants/apolloSearchFields";
 import { useToast } from "../context/ToastContext";
 
-function Detail({ label, value, href }) {
+function Detail({ label, value, href, icon: IconCmp }) {
   return (
     <div className="py-2.5">
       <dt className="text-xs font-medium text-ink-400">{label}</dt>
       <dd className="mt-0.5 text-sm text-ink-800">
-        {href && value ? (
+        {href && value && IconCmp ? (
+          <IconLink href={href} label={String(value)}>
+            <IconCmp width={18} height={18} />
+          </IconLink>
+        ) : href && value ? (
           <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-600 hover:underline">
             {value} <Icon.External width={13} height={13} />
           </a>
@@ -220,8 +224,8 @@ export default function ResearchCompanyDetail() {
           {tab === "overview" && (
             <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
               <Detail label="Domain" value={fields.domain} href={fields.domain ? `https://${fields.domain}` : null} />
-              <Detail label="Website" value={website} href={website} />
-              <Detail label="LinkedIn" value={fields.linkedin_url} href={fields.linkedin_url} />
+              <Detail label="Website" value={website} href={website ? normalizeExternalHref(website) : null} icon={Icon.Globe} />
+              <Detail label="LinkedIn" value={fields.linkedin_url} href={fields.linkedin_url ? normalizeExternalHref(fields.linkedin_url, "linkedin") : null} icon={Icon.LinkedIn} />
               <Detail label="Industry" value={fields.industry} />
               <Detail label="Employees" value={fields.employee_count?.toLocaleString?.() || fields.employee_count} />
               <Detail label="Revenue" value={fields.revenue ? `$${Number(fields.revenue).toLocaleString()}` : null} />

@@ -264,3 +264,26 @@ export function Field({ label, children, hint }) {
     </div>
   );
 }
+
+export function normalizeExternalHref(value, kind = "website") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw.replace(/^www\./i, "")}`;
+}
+
+export function IconLink({ href, label, children, className = "" }) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={label || href}
+      aria-label={label || href}
+      className={`inline-flex items-center justify-center rounded-md p-1 text-ink-500 transition hover:bg-ink-100 hover:text-brand-600 ${className}`}
+    >
+      {children}
+    </a>
+  );
+}

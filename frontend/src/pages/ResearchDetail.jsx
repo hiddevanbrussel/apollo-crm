@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, Modal, PageLoader, Pagination, Spinner, StatusBadge } from "../components/ui";
+import { CompanyLogo, EmptyState, Field, IconLink, Modal, PageLoader, Pagination, Spinner, StatusBadge, normalizeExternalHref } from "../components/ui";
 import {
   PEOPLE_CONTACT_FIELDS,
   buildCriteria,
@@ -52,12 +52,21 @@ function CellValue({ column, row, isOrg, searchId }) {
     );
   }
 
-  if (column.key === "website" || column.key === "linkedin_url") {
-    const href = column.key === "website" && !String(value).startsWith("http") ? `https://${value}` : value;
+  if (column.key === "website") {
+    const href = normalizeExternalHref(value);
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
-        {String(value).replace(/^https?:\/\//, "")}
-      </a>
+      <IconLink href={href} label={String(value)}>
+        <Icon.Globe width={18} height={18} />
+      </IconLink>
+    );
+  }
+
+  if (column.key === "linkedin_url") {
+    const href = normalizeExternalHref(value, "linkedin");
+    return (
+      <IconLink href={href} label={String(value)}>
+        <Icon.LinkedIn width={18} height={18} />
+      </IconLink>
     );
   }
 
