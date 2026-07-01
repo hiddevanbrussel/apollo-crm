@@ -30,6 +30,64 @@ logger = logging.getLogger("apollo.service")
 DEFAULT_TIMEOUT = 30.0
 
 
+def _normalize_match_domain(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip().lower()
+    for prefix in ("https://", "http://"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+    text = text.split("/")[0].split("?")[0]
+    if text.startswith("www."):
+        text = text[4:]
+    return text or None
+
+
+def _organization_domain(org: dict[str, Any]) -> str | None:
+    for key in ("primary_domain", "domain", "website_url"):
+        raw = org.get(key)
+        if raw:
+            domain = _normalize_match_domain(str(raw))
+            if domain:
+                return domain
+    return None
+
+
+def _pick_best_organization(
+    organizations: list[dict[str, Any]],
+    *,
+    domain: str | None,
+    name: str | None,
+) -> dict[str, Any] | None:
+    if not organizations:
+        return None
+
+    domain = _normalize_match_domain(domain)
+    name_key = name.strip().lower() if name else None
+
+    if domain:
+        domain_matches = [org for org in organizations if _organization_domain(org) == domain]
+        if len(domain_matches) == 1:
+            return domain_matches[0]
+        if domain_matches:
+            if name_key:
+                for org in domain_matches:
+                    if (org.get("name") or "").strip().lower() == name_key:
+                        return org
+            return domain_matches[0]
+
+    if name_key:
+        for org in organizations:
+            if (org.get("name") or "").strip().lower() == name_key:
+                return org
+        for org in organizations:
+            org_name = (org.get("name") or "").strip().lower()
+            if name_key in org_name or org_name in name_key:
+                return org
+
+    return organizations[0]
+
+
 class ApolloError(Exception):
     """Raised when the Apollo API returns an error or is misconfigured."""
 
@@ -164,6 +222,50 @@ class ApolloService:
         """Search for organizations. Returns raw Apollo response."""
         payload = self._clean(normalize_search_payload(filters))
         return self._post("/api/v1/mixed_companies/search", payload)
+
+    def find_organization(
+        self,
+        *,
+        domain: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve an organization via mixed_companies/search (domain preferred, then name)."""
+        domain = _normalize_match_domain(domain)
+        name = name.strip() if name and name.strip() else None
+
+        if not domain and not name:
+            raise ApolloError(
+                "A company domain or name is required to search Apollo.",
+                status_code=400,
+            )
+
+        if domain:
+            response = self.search_organizations(
+                {
+                    "q_organization_domains_list": [domain],
+                    "page": 1,
+                    "per_page": 25,
+                }
+            )
+            orgs = response.get("organizations") or response.get("accounts") or []
+            picked = _pick_best_organization(orgs, domain=domain, name=name)
+            if picked:
+                return picked
+
+        if name:
+            response = self.search_organizations(
+                {
+                    "q_organization_name": name,
+                    "page": 1,
+                    "per_page": 25,
+                }
+            )
+            orgs = response.get("organizations") or response.get("accounts") or []
+            picked = _pick_best_organization(orgs, domain=domain, name=name)
+            if picked:
+                return picked
+
+        return None
 
     def enrich_person(self, data: dict[str, Any]) -> dict[str, Any]:
         """Enrich a single person via /people/match (query parameters)."""

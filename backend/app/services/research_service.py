@@ -429,6 +429,14 @@ def result_item(result: ResearchResult, query_type: str) -> dict[str, Any]:
     return row
 
 
+def _organization_lookup_fields(result: ResearchResult) -> tuple[str | None, str | None]:
+    raw = result.raw_data or {}
+    row = _flatten_org(raw)
+    domain = (row.get("domain") or raw.get("primary_domain") or "").strip().lower() or None
+    name = (row.get("name") or result.name or raw.get("name") or "").strip() or None
+    return domain, name
+
+
 def enrich_result_record(
     client: ApolloService,
     result: ResearchResult,
@@ -436,14 +444,32 @@ def enrich_result_record(
     query_type: str,
 ) -> dict[str, Any]:
     """Fetch complete Apollo profile and return updated raw payload."""
-    apollo_id = _apollo_id_for_result(result)
-    if not apollo_id:
-        raise ApolloError("This record has no Apollo id.", status_code=400)
-
     if query_type == "people":
+        apollo_id = _apollo_id_for_result(result)
+        if not apollo_id:
+            raise ApolloError("This record has no Apollo id.", status_code=400)
         response = client.get_person(apollo_id)
         entity = response.get("person") or {}
     else:
+        apollo_id = _apollo_id_for_result(result)
+        if not apollo_id:
+            domain, name = _organization_lookup_fields(result)
+            if not domain and not name:
+                raise ApolloError(
+                    "This record has no Apollo id. Add a domain or company name to look it up.",
+                    status_code=400,
+                )
+            match = client.find_organization(domain=domain, name=name)
+            if not match:
+                label = domain or name or "this company"
+                raise ApolloError(
+                    f"No matching organization found in Apollo for {label}.",
+                    status_code=404,
+                )
+            apollo_id = str(match.get("id") or "").strip()
+            if not apollo_id:
+                raise ApolloError("Apollo search returned a match without an id.", status_code=502)
+
         response = client.get_organization(apollo_id)
         entity = response.get("organization") or response.get("account") or {}
 
