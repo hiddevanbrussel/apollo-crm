@@ -85,6 +85,19 @@ export default function ResearchDetail() {
   const [enriching, setEnriching] = useState(false);
   const [enrichingId, setEnrichingId] = useState(null);
 
+  const [showAddCompany, setShowAddCompany] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    name: "",
+    domain: "",
+    country: "",
+    industry: "",
+    city: "",
+    website: "",
+    linkedin_url: "",
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [importing, setImporting] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -269,8 +282,70 @@ export default function ResearchDetail() {
     }
   };
 
+  const addCompany = async (e) => {
+    e?.preventDefault();
+    if (!companyForm.name.trim()) {
+      toast.info("Company name is required.");
+      return;
+    }
+    setSavingCompany(true);
+    try {
+      await api.post(`/research/searches/${id}/results`, {
+        name: companyForm.name.trim(),
+        domain: companyForm.domain || null,
+        website: companyForm.website || null,
+        industry: companyForm.industry || null,
+        country: companyForm.country || null,
+        city: companyForm.city || null,
+        linkedin_url: companyForm.linkedin_url || null,
+      });
+      toast.success("Company added.");
+      setShowAddCompany(false);
+      setCompanyForm({ name: "", domain: "", country: "", industry: "", city: "", website: "", linkedin_url: "" });
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingCompany(false);
+    }
+  };
+
+  const runImport = async (file) => {
+    if (!file) {
+      toast.info("Select a file first.");
+      return;
+    }
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data: res } = await api.post(`/research/searches/${id}/import`, fd);
+      toast.success(`${res.added} added${res.skipped ? `, ${res.skipped} skipped` : ""}.`);
+      if (res.errors?.length) toast.info(res.errors.slice(0, 3).join(" · "));
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const removeResult = async (rowId) => {
+    if (!confirm("Remove this company from the dataset?")) return;
+    try {
+      await api.delete(`/research/searches/${id}/results/${rowId}`);
+      toast.success("Company removed.");
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
   const search = data?.search;
   const isOrg = search?.query_type === "organizations";
+  const isManualDataset = search?.criteria?._dataset_source === "manual";
   const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchId = search?.criteria?._source_search_id;
   const sourceSearchName = search?.criteria?._source_search_name;
@@ -287,7 +362,8 @@ export default function ResearchDetail() {
           </Link>
           <h1 className="text-xl font-semibold text-ink-900">{search?.name || "Research"}</h1>
           <p className="text-sm text-ink-500">
-            {isOrg ? "Companies" : "People"} · {search?.result_count ?? 0} records captured
+            {isManualDataset ? "Manual company list" : isOrg ? "Companies" : "People"} · {search?.result_count ?? 0}{" "}
+            records captured
             {search?.total_available ? ` of ${search.total_available} available` : ""}
           </p>
           {sourceSearchId ? (
@@ -315,6 +391,27 @@ export default function ResearchDetail() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isManualDataset && (
+            <>
+              <button className="btn-secondary" onClick={() => setShowAddCompany(true)}>
+                <Icon.Plus width={18} height={18} /> Add company
+              </button>
+              <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>
+                {importing ? <Spinner className="h-4 w-4" /> : <Icon.Upload width={18} height={18} />} Import
+                <input
+                  type="file"
+                  accept=".csv,.xlsx,.xlsm"
+                  className="hidden"
+                  disabled={importing}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) runImport(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </>
+          )}
           {isOrg && (
             <button className="btn-primary" onClick={openContactsModal} title="Find contacts at these companies">
               <Icon.Users width={18} height={18} /> Find contacts
@@ -359,7 +456,23 @@ export default function ResearchDetail() {
         {loading ? (
           <PageLoader />
         ) : !data?.items?.length ? (
-          <EmptyState title="No records" description="This research dataset is empty." />
+          <EmptyState
+            title="No records yet"
+            description={
+              isManualDataset
+                ? "Add companies manually or import a CSV/Excel file to get started."
+                : "This research dataset is empty."
+            }
+            action={
+              isManualDataset ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button className="btn-primary" onClick={() => setShowAddCompany(true)}>
+                    <Icon.Plus width={18} height={18} /> Add company
+                  </button>
+                </div>
+              ) : null
+            }
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -405,20 +518,31 @@ export default function ResearchDetail() {
                         </td>
                       ))}
                       <td className="table-td">
-                        {!row.enriched && (
-                          <button
-                            className="btn-ghost px-2 py-1 text-sm"
-                            onClick={() => enrichOne(row.id)}
-                            disabled={!apolloReady || enrichingId === row.id}
-                            title="Fetch complete Apollo profile"
-                          >
-                            {enrichingId === row.id ? (
-                              <Spinner className="h-4 w-4" />
-                            ) : (
-                              <Icon.Bolt width={15} height={15} />
-                            )}
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {!row.enriched && (
+                            <button
+                              className="btn-ghost px-2 py-1 text-sm"
+                              onClick={() => enrichOne(row.id)}
+                              disabled={!apolloReady || enrichingId === row.id}
+                              title="Fetch complete Apollo profile"
+                            >
+                              {enrichingId === row.id ? (
+                                <Spinner className="h-4 w-4" />
+                              ) : (
+                                <Icon.Bolt width={15} height={15} />
+                              )}
+                            </button>
+                          )}
+                          {isManualDataset && (
+                            <button
+                              className="btn-ghost px-2 py-1 text-red-500"
+                              onClick={() => removeResult(row.id)}
+                              title="Remove from dataset"
+                            >
+                              <Icon.Trash width={15} height={15} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -480,6 +604,78 @@ export default function ResearchDetail() {
               </select>
             </Field>
           </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showAddCompany}
+        onClose={() => !savingCompany && setShowAddCompany(false)}
+        title="Add company"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowAddCompany(false)} disabled={savingCompany}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={addCompany} disabled={savingCompany}>
+              {savingCompany && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={addCompany} className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <Field label="Company name *">
+              <input
+                className="input"
+                required
+                value={companyForm.name}
+                onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Domain">
+            <input
+              className="input"
+              placeholder="example.com"
+              value={companyForm.domain}
+              onChange={(e) => setCompanyForm({ ...companyForm, domain: e.target.value })}
+            />
+          </Field>
+          <Field label="Website">
+            <input
+              className="input"
+              value={companyForm.website}
+              onChange={(e) => setCompanyForm({ ...companyForm, website: e.target.value })}
+            />
+          </Field>
+          <Field label="Country">
+            <input
+              className="input"
+              value={companyForm.country}
+              onChange={(e) => setCompanyForm({ ...companyForm, country: e.target.value })}
+            />
+          </Field>
+          <Field label="City">
+            <input
+              className="input"
+              value={companyForm.city}
+              onChange={(e) => setCompanyForm({ ...companyForm, city: e.target.value })}
+            />
+          </Field>
+          <Field label="Industry">
+            <input
+              className="input"
+              value={companyForm.industry}
+              onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })}
+            />
+          </Field>
+          <Field label="LinkedIn">
+            <input
+              className="input"
+              value={companyForm.linkedin_url}
+              onChange={(e) => setCompanyForm({ ...companyForm, linkedin_url: e.target.value })}
+            />
+          </Field>
         </form>
       </Modal>
     </div>

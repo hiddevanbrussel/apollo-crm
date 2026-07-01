@@ -1,6 +1,6 @@
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,8 +9,11 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
+    ResearchCompanyAdd,
     ResearchCompanyContactsOut,
     ResearchCreate,
+    ResearchDatasetCreate,
+    ResearchDatasetImportResult,
     ResearchDetail,
     ResearchEnrichRequest,
     ResearchEnrichResult,
@@ -23,6 +26,12 @@ from app.schemas.research import (
 )
 from app.services import research_service
 from app.services.apollo_service import ApolloError
+from app.services.research_dataset import (
+    add_company_to_dataset,
+    create_manual_dataset as create_manual_dataset_record,
+    delete_dataset_result,
+    import_companies_to_dataset,
+)
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -84,6 +93,95 @@ def create_search(
     except ApolloError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
     return _detail(db, search)
+
+
+@router.post("/datasets", response_model=ResearchDetail)
+def create_manual_dataset(
+    payload: ResearchDatasetCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create an empty company dataset to fill manually or via import."""
+    search = create_manual_dataset_record(
+        db,
+        name=payload.name.strip(),
+        created_by=user.id,
+    )
+    return _detail(db, search)
+
+
+@router.post("/searches/{search_id}/results", response_model=ResearchResultDetail)
+def add_company_to_search(
+    search_id: int,
+    payload: ResearchCompanyAdd,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    try:
+        result = add_company_to_dataset(
+            db,
+            search,
+            name=payload.name,
+            domain=payload.domain,
+            website=payload.website,
+            industry=payload.industry,
+            country=payload.country,
+            city=payload.city,
+            phone=payload.phone,
+            linkedin_url=payload.linkedin_url,
+            employee_count=payload.employee_count,
+            revenue=payload.revenue,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
+@router.post("/searches/{search_id}/import", response_model=ResearchDatasetImportResult)
+async def import_companies_to_search(
+    search_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Import companies from CSV/Excel into a manual research dataset."""
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    content = await file.read()
+    try:
+        result = import_companies_to_dataset(
+            db,
+            search,
+            filename=file.filename or "import.csv",
+            content=content,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchDatasetImportResult(**result)
+
+
+@router.delete("/searches/{search_id}/results/{result_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_search_result(
+    search_id: int,
+    result_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    result = db.get(ResearchResult, result_id)
+    if not result or result.search_id != search_id:
+        raise HTTPException(status_code=404, detail="Research result not found.")
+    try:
+        delete_dataset_result(db, search, result)
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return None
 
 
 @router.get("/searches", response_model=ResearchSearchList)

@@ -26,6 +26,9 @@ export default function MarketResearch() {
   const [running, setRunning] = useState(false);
   const [searches, setSearches] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [createMode, setCreateMode] = useState("apollo");
+  const [datasetName, setDatasetName] = useState("");
+  const [creatingDataset, setCreatingDataset] = useState(false);
 
   const disabled = !status?.enabled || !status?.configured;
   const activeFields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
@@ -108,6 +111,26 @@ export default function MarketResearch() {
     }
   };
 
+  const createDataset = async (e) => {
+    e?.preventDefault();
+    if (!datasetName.trim()) {
+      toast.info("Give your dataset a name first.");
+      return;
+    }
+    setCreatingDataset(true);
+    try {
+      const { data } = await api.post("/research/datasets", { name: datasetName.trim() });
+      toast.success("Empty company dataset created.");
+      setDatasetName("");
+      loadList();
+      navigate(`/research/${data.id}`);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setCreatingDataset(false);
+    }
+  };
+
   const exportSearch = async (s, format) => {
     try {
       const res = await api.get(`/research/searches/${s.id}/export`, { params: { format }, responseType: "blob" });
@@ -140,7 +163,7 @@ export default function MarketResearch() {
       <div>
         <h1 className="text-xl font-semibold text-ink-900">Market Research</h1>
         <p className="text-sm text-ink-500">
-          Search Apollo companies and people with full API filters, save results as datasets, and export later.
+          Search Apollo or build your own company list (manual entry / import), then enrich and find contacts.
         </p>
       </div>
 
@@ -155,6 +178,54 @@ export default function MarketResearch() {
         </p>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={createMode === "apollo" ? "btn-primary" : "btn-secondary"}
+          onClick={() => setCreateMode("apollo")}
+        >
+          <Icon.Search width={18} height={18} /> Apollo search
+        </button>
+        <button
+          type="button"
+          className={createMode === "dataset" ? "btn-primary" : "btn-secondary"}
+          onClick={() => setCreateMode("dataset")}
+        >
+          <Icon.Plus width={18} height={18} /> Own company list
+        </button>
+      </div>
+
+      {createMode === "dataset" ? (
+        <form onSubmit={createDataset} className="card p-5 space-y-4">
+          <p className="text-sm text-ink-600">
+            Create an empty company dataset. Add companies manually or import a CSV/Excel file (column{" "}
+            <code className="rounded bg-ink-50 px-1 text-xs">customer_name</code> required, optional{" "}
+            <code className="rounded bg-ink-50 px-1 text-xs">domain</code>, <code className="rounded bg-ink-50 px-1 text-xs">country</code>).
+            Then enrich via Apollo and search contacts with filters — same as Apollo research.
+          </p>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="min-w-[220px] flex-1">
+              <Field label="Dataset name *">
+                <input
+                  className="input"
+                  placeholder="e.g. Target accounts Q3"
+                  value={datasetName}
+                  onChange={(e) => setDatasetName(e.target.value)}
+                />
+              </Field>
+            </div>
+            <button type="submit" className="btn-primary" disabled={creatingDataset}>
+              {creatingDataset ? (
+                <Spinner className="h-4 w-4 border-white/40 border-t-white" />
+              ) : (
+                <Icon.Plus width={18} height={18} />
+              )}
+              Create dataset
+            </button>
+          </div>
+        </form>
+      ) : (
+      <>
       {disabled && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           The Apollo integration is {status?.configured ? "disabled" : "not configured"}. Go to{" "}
@@ -211,6 +282,8 @@ export default function MarketResearch() {
           </button>
         </div>
       </form>
+      </>
+      )}
 
       <div className="card">
         <div className="border-b border-ink-100 px-5 py-4">
@@ -242,7 +315,13 @@ export default function MarketResearch() {
                         {s.name}
                       </Link>
                     </td>
-                    <td className="table-td capitalize">{s.query_type === "people" ? "People" : "Companies"}</td>
+                    <td className="table-td">
+                      {s.criteria?._dataset_source === "manual" ? (
+                        <span className="badge bg-violet-50 text-violet-700">Manual list</span>
+                      ) : (
+                        <span className="capitalize">{s.query_type === "people" ? "People" : "Companies"}</span>
+                      )}
+                    </td>
                     <td className="table-td">
                       {s.result_count}
                       {s.total_available ? <span className="text-ink-400"> / {s.total_available}</span> : null}

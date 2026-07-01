@@ -11,6 +11,30 @@ class ResearchCreate(BaseModel):
     max_records: int = Field(default=500, ge=1, le=2000)
 
 
+class ResearchDatasetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class ResearchCompanyAdd(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    domain: str | None = None
+    website: str | None = None
+    industry: str | None = None
+    country: str | None = None
+    city: str | None = None
+    phone: str | None = None
+    linkedin_url: str | None = None
+    employee_count: int | None = None
+    revenue: int | None = None
+
+
+class ResearchDatasetImportResult(BaseModel):
+    total_rows: int = 0
+    added: int = 0
+    skipped: int = 0
+    errors: list[str] = []
+
+
 class ResearchPeopleFromCompanies(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     criteria: dict[str, Any] = {}
