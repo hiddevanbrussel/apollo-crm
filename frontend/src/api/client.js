@@ -97,7 +97,9 @@ function responseDetail(data) {
 }
 
 api.interceptors.request.use(async (config) => {
-  if (!isPublicRequest(config.url || "")) {
+  const url = config.url || "";
+  // Bootstrap requests must not wait — /auth/me is what completes bootstrap.
+  if (!isPublicRequest(url) && !isAuthBootstrapRequest(url)) {
     await waitForAuthBootstrap();
   }
   const token = getToken();

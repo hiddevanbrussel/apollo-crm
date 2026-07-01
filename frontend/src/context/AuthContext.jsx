@@ -35,9 +35,10 @@ export function AuthProvider({ children }) {
       }
       setUser(null);
     } finally {
-      if (seq !== loadSeq.current) return;
-      setAuthBootstrapping(false);
-      setLoading(false);
+      if (seq === loadSeq.current) {
+        setAuthBootstrapping(false);
+        setLoading(false);
+      }
     }
   }, []);
 
