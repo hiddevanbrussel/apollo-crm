@@ -171,7 +171,7 @@ def _collect_from_apollo(
 
         for raw in batch:
             apollo_id = raw.get("id")
-            key = apollo_id or f"_idx{len(collected)}"
+            key = apollo_id or f"_idx{page}_{len(seen)}"
             if key in seen:
                 continue
             seen.add(key)
@@ -296,6 +296,42 @@ def result_detail(result: ResearchResult, search: ResearchSearch) -> dict[str, A
     }
 
 
+def _mark_existing_at_company_on_people(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    collected: list[dict[str, Any]],
+    criteria: dict[str, Any],
+    company_result: ResearchResult | None = None,
+) -> list[dict[str, Any]]:
+    """Tag people already stored on a company vault row (still included in the recordset)."""
+    from app.services.research_company_contacts import (
+        load_vault_apollo_ids_by_company,
+        person_already_in_company_vault,
+    )
+
+    vault_apollo_ids_by_company = load_vault_apollo_ids_by_company(
+        db, company_search_id=parent_search.id
+    )
+    if not vault_apollo_ids_by_company:
+        return collected
+
+    marked: list[dict[str, Any]] = []
+    for raw in collected:
+        tagged = dict(raw)
+        if person_already_in_company_vault(
+            db,
+            parent_search=parent_search,
+            person_raw=tagged,
+            vault_apollo_ids_by_company=vault_apollo_ids_by_company,
+            company_result=company_result,
+            people_criteria=criteria,
+        ):
+            tagged["_already_at_company"] = True
+        marked.append(tagged)
+    return marked
+
+
 def run_people_for_domains(
     db: Session,
     client: ApolloService,
@@ -306,6 +342,8 @@ def run_people_for_domains(
     domains: list[str],
     created_by: int | None,
     source_meta: dict[str, Any],
+    parent_search: ResearchSearch | None = None,
+    company_result: ResearchResult | None = None,
 ) -> ResearchSearch:
     if not domains:
         raise ApolloError("No domains to search people for.", status_code=400)
@@ -345,6 +383,19 @@ def run_people_for_domains(
             collected.append(_tag_person_employer_domain(raw, candidate_domains=batch_domains))
             if len(collected) >= max_records:
                 break
+
+    if parent_search and parent_search.query_type == "organizations":
+        collected = _assign_employer_domains_from_parent(db, parent_search, collected)
+        collected = _mark_existing_at_company_on_people(
+            db,
+            parent_search=parent_search,
+            collected=collected,
+            criteria=stored_criteria,
+            company_result=company_result,
+        )
+        already_count = sum(1 for raw in collected if raw.get("_already_at_company"))
+        if already_count:
+            stored_criteria["_already_at_company_count"] = already_count
 
     return _persist_search(
         db,
@@ -390,6 +441,7 @@ def run_people_for_company_search(
             "_source_search_id": parent_search.id,
             "_source_search_name": parent_search.name,
         },
+        parent_search=parent_search,
     )
 
 
@@ -429,6 +481,8 @@ def run_people_for_company_result(
             "_source_company_name": company_name,
             "_source_company_domain": domain,
         },
+        parent_search=parent_search,
+        company_result=company_result,
     )
 
 
@@ -486,9 +540,12 @@ def _apollo_id_for_result(result: ResearchResult) -> str | None:
 
 
 def result_item(result: ResearchResult, query_type: str) -> dict[str, Any]:
-    row = flatten(query_type, result.raw_data or {})
+    raw = result.raw_data or {}
+    row = flatten(query_type, raw)
     row["id"] = result.id
-    row["enriched"] = is_enriched(result.raw_data)
+    row["enriched"] = is_enriched(raw)
+    if query_type == "people":
+        row["already_at_company"] = bool(raw.get("_already_at_company"))
     return row
 
 

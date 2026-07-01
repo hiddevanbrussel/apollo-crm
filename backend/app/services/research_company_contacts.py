@@ -364,3 +364,63 @@ def require_company_result(
     if not result or result.search_id != parent_search.id or result.entity_type != "company":
         raise ApolloError("Company not found in this recordset.", status_code=404)
     return result
+
+
+class _CriteriaSearch:
+    """Minimal stand-in for resolve_company_results_for_person."""
+
+    def __init__(self, criteria: dict[str, Any]):
+        self.criteria = criteria
+
+
+def load_vault_apollo_ids_by_company(
+    db: Session,
+    *,
+    company_search_id: int,
+) -> dict[int, set[str]]:
+    """Apollo person ids already saved on companies in a recordset."""
+    rows = db.execute(
+        select(ResearchCompanyContact.company_result_id, ResearchCompanyContact.apollo_id).where(
+            ResearchCompanyContact.company_search_id == company_search_id,
+            ResearchCompanyContact.apollo_id.isnot(None),
+            ResearchCompanyContact.apollo_id != "",
+        )
+    ).all()
+    out: dict[int, set[str]] = {}
+    for company_result_id, apollo_id in rows:
+        aid = str(apollo_id).strip()
+        if aid:
+            out.setdefault(int(company_result_id), set()).add(aid)
+    return out
+
+
+def person_already_in_company_vault(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    person_raw: dict[str, Any],
+    vault_apollo_ids_by_company: dict[int, set[str]],
+    company_result: ResearchResult | None = None,
+    people_criteria: dict[str, Any] | None = None,
+) -> bool:
+    """True when this Apollo person is already stored on a matching company row."""
+    apollo_id = str(person_raw.get("id") or "").strip()
+    if not apollo_id:
+        return False
+
+    if company_result is not None:
+        return apollo_id in vault_apollo_ids_by_company.get(company_result.id, set())
+
+    criteria = people_criteria or {}
+    fake_search = _CriteriaSearch(criteria)
+    targets = resolve_company_results_for_person(
+        db,
+        parent_search=parent_search,
+        company_result=None,
+        person_raw=person_raw,
+        people_search=fake_search,  # type: ignore[arg-type]
+    )
+    for target in targets:
+        if apollo_id in vault_apollo_ids_by_company.get(target.id, set()):
+            return True
+    return False

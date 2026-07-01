@@ -207,7 +207,11 @@ export default function ResearchCompanyDetail() {
         max_records: Number(contactMaxRecords),
       });
       toast.success(
-        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
+        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}${
+          created.criteria?._already_at_company_count
+            ? ` · ${created.criteria._already_at_company_count} already at company`
+            : ""
+        }.`
       );
       setShowContacts(false);
       await load();

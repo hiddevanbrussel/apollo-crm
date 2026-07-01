@@ -260,7 +260,11 @@ export default function ResearchDetail() {
         max_records: Number(contactMaxRecords),
       });
       toast.success(
-        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
+        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}${
+          created.criteria?._already_at_company_count
+            ? ` · ${created.criteria._already_at_company_count} already at company`
+            : ""
+        }.`
       );
       setShowContacts(false);
       load();
@@ -822,7 +826,12 @@ export default function ResearchDetail() {
                         />
                       </td>
                       <td className="table-td">
-                        <StatusBadge status={row.enriched ? "enriched" : "none"} />
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusBadge status={row.enriched ? "enriched" : "none"} />
+                          {!isOrg && row.already_at_company ? (
+                            <span className="badge bg-amber-50 text-amber-700">Al bij bedrijf</span>
+                          ) : null}
+                        </div>
                       </td>
                       {columns.map((col) => (
                         <td key={col.key} className="table-td">
