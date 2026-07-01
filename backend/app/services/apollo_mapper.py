@@ -245,11 +245,28 @@ def _normalize_name_token(value: str | None) -> str:
 
 
 def _org_domain(person: dict[str, Any]) -> str | None:
-    org = person.get("organization") or {}
-    domain = _get(org, "primary_domain", "domain")
-    if isinstance(domain, str):
-        return domain.strip().lower() or None
+    from app.services.import_service import normalize_domain
+
+    org = person.get("organization") or person.get("account") or {}
+    if isinstance(org, dict):
+        for key in ("primary_domain", "domain", "website_url"):
+            val = org.get(key)
+            if val:
+                normalized = normalize_domain(str(val))
+                if normalized:
+                    return normalized
+    for key in ("organization_primary_domain", "organization_domain", "account_domain"):
+        val = person.get(key)
+        if val:
+            normalized = normalize_domain(str(val))
+            if normalized:
+                return normalized
     return None
+
+
+def employer_domain_from_person(person: dict[str, Any]) -> str | None:
+    """Best-effort employer domain from an Apollo person payload."""
+    return _org_domain(person)
 
 
 def score_person_search_candidate(

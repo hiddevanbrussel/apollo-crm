@@ -16,9 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.models import Contact, ResearchResult, ResearchSearch, SearchHistory
 from app.services.apollo_filters import normalize_search_payload
-from app.services.apollo_mapper import map_organization, map_person
+from app.services.apollo_mapper import map_organization, map_person, employer_domain_from_person
 from app.services.apollo_service import ApolloError, ApolloService
 from app.services.company_domains import find_by_domain
+from app.services.import_service import normalize_domain
 
 logger = logging.getLogger("research.service")
 
@@ -72,7 +73,7 @@ def _flatten_person(raw: dict[str, Any]) -> dict[str, Any]:
     row = {c: f.get(c) for c in PERSON_COLUMNS}
     row["name"] = f.get("full_name")
     row["organization_name"] = org_fields.get("name") or (raw.get("organization") or {}).get("name")
-    row["organization_domain"] = org_fields.get("domain")
+    row["organization_domain"] = employer_domain_from_person(raw) or org_fields.get("domain")
     return row
 
 
@@ -107,7 +108,7 @@ def domains_from_company_search(db: Session, search: ResearchSearch) -> list[str
     seen: set[str] = set()
     for result in rows:
         row = _flatten_org(result.raw_data or {})
-        domain = (row.get("domain") or "").strip().lower()
+        domain = normalize_domain(row.get("domain") or (result.raw_data or {}).get("primary_domain"))
         if domain and domain not in seen:
             seen.add(domain)
             domains.append(domain)
@@ -174,6 +175,11 @@ def _collect_from_apollo(
             if key in seen:
                 continue
             seen.add(key)
+            if query_type == "people":
+                employer_domain = employer_domain_from_person(raw)
+                if employer_domain:
+                    raw = dict(raw)
+                    raw["_research_employer_domain"] = employer_domain
             collected.append(raw)
             if len(collected) >= max_records:
                 break
@@ -234,8 +240,8 @@ def _persist_search(
 
 def domain_from_result(result: ResearchResult) -> str | None:
     row = _flatten_org(result.raw_data or {})
-    domain = (row.get("domain") or "").strip().lower()
-    return domain or None
+    domain = normalize_domain(row.get("domain") or (result.raw_data or {}).get("primary_domain"))
+    return domain
 
 
 def result_detail(result: ResearchResult, search: ResearchSearch) -> dict[str, Any]:
@@ -581,6 +587,27 @@ def _dedupe_key(*, apollo_id: str | None, email: str | None, name: str | None) -
     return ""
 
 
+def _person_belongs_to_company(
+    person_raw: dict[str, Any],
+    *,
+    company_domain: str,
+    company_result_id: int,
+    people_search: ResearchSearch,
+) -> bool:
+    """Return True when a saved person record belongs to a specific company row."""
+    tagged_domain = normalize_domain(person_raw.get("_research_employer_domain"))
+    person_domain = tagged_domain or employer_domain_from_person(person_raw)
+    if person_domain and person_domain == company_domain:
+        return True
+
+    criteria = people_search.criteria or {}
+    source_result_id = criteria.get("_source_company_result_id")
+    if source_result_id is not None and int(source_result_id) == company_result_id:
+        return True
+
+    return False
+
+
 def _company_results_for_domain(
     db: Session,
     domain: str,
@@ -588,7 +615,7 @@ def _company_results_for_domain(
     apollo_id: str | None = None,
 ) -> list[tuple[ResearchResult, ResearchSearch]]:
     """Research company snapshots sharing a domain (or Apollo id)."""
-    domain = domain.strip().lower()
+    domain = normalize_domain(domain) or domain.strip().lower()
     match_clauses = []
     if domain:
         match_clauses.extend(
@@ -714,18 +741,21 @@ def list_contacts_for_company_result(
 
     people_search_clauses = [
         ResearchSearch.criteria["_source_company_domain"].astext == domain,
-        ResearchSearch.criteria["organization_domains"].contains([domain]),
+        ResearchSearch.criteria["_source_search_id"].astext == str(parent_search.id),
     ]
     if related_result_ids:
         people_search_clauses.append(
             ResearchSearch.criteria["_source_company_result_id"].astext.in_(related_result_ids)
         )
 
-    people_search_stmt = select(ResearchSearch.id).where(
-        ResearchSearch.query_type == "people",
-        or_(*people_search_clauses),
-    )
-    people_search_ids = db.execute(people_search_stmt).scalars().all()
+    people_search_rows = db.execute(
+        select(ResearchSearch).where(
+            ResearchSearch.query_type == "people",
+            or_(*people_search_clauses),
+        )
+    ).scalars().all()
+    people_search_by_id = {row.id: row for row in people_search_rows}
+    people_search_ids = list(people_search_by_id.keys())
 
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -744,12 +774,16 @@ def list_contacts_for_company_result(
             .all()
         )
         for result, search in rows:
-            fields = _flatten_person(result.raw_data or {})
-            person_domain = (fields.get("organization_domain") or "").strip().lower()
-            if person_domain and person_domain != domain:
+            person_raw = result.raw_data or {}
+            if not _person_belongs_to_company(
+                person_raw,
+                company_domain=domain,
+                company_result_id=company_result.id,
+                people_search=people_search_by_id.get(search.id, search),
+            ):
                 continue
 
-            apollo_id = result.apollo_id or fields.get("apollo_id")
+            fields = _flatten_person(person_raw)
             name = fields.get("name") or result.name
             email = fields.get("email")
             key = _dedupe_key(apollo_id=apollo_id, email=email, name=name)

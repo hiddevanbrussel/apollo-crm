@@ -452,38 +452,6 @@ export default function ResearchDetail() {
         </div>
       </div>
 
-      {isOrg && (loadingChildren || childSearches.length > 0) ? (
-        <div className="card">
-          <div className="border-b border-ink-100 px-5 py-4">
-            <h2 className="text-sm font-semibold text-ink-900">Contact recordsets</h2>
-            <p className="mt-0.5 text-xs text-ink-500">People searches started from this company recordset.</p>
-          </div>
-          {loadingChildren ? (
-            <div className="flex justify-center py-8">
-              <Spinner className="h-5 w-5" />
-            </div>
-          ) : (
-            <div className="divide-y divide-ink-100">
-              {childSearches.map((child) => (
-                <div key={child.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <Link to={`/research/${child.id}`} className="font-medium text-ink-900 hover:text-brand-600">
-                      {child.name}
-                    </Link>
-                    <p className="text-xs text-ink-500">
-                      {child.result_count} contacts · {new Date(child.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                  <Link to={`/research/${child.id}`} className="btn-secondary text-sm">
-                    <Icon.Users width={16} height={16} /> View contacts
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
-
       <div className="card">
         {selected.size > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-brand-50/60 px-4 py-3">
@@ -601,6 +569,38 @@ export default function ResearchDetail() {
           </>
         )}
       </div>
+
+      {isOrg && (loadingChildren || childSearches.length > 0) ? (
+        <div className="card">
+          <div className="border-b border-ink-100 px-5 py-4">
+            <h2 className="text-sm font-semibold text-ink-900">Contact recordsets</h2>
+            <p className="mt-0.5 text-xs text-ink-500">People searches started from this company recordset.</p>
+          </div>
+          {loadingChildren ? (
+            <div className="flex justify-center py-8">
+              <Spinner className="h-5 w-5" />
+            </div>
+          ) : (
+            <div className="divide-y divide-ink-100">
+              {childSearches.map((child) => (
+                <div key={child.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <Link to={`/research/${child.id}`} className="font-medium text-ink-900 hover:text-brand-600">
+                      {child.name}
+                    </Link>
+                    <p className="text-xs text-ink-500">
+                      {child.result_count} contacts · {new Date(child.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <Link to={`/research/${child.id}`} className="btn-secondary text-sm">
+                    <Icon.Users width={16} height={16} /> View contacts
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <Modal
         open={showContacts}
