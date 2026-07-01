@@ -234,3 +234,79 @@ def delete_contact_from_contact_dataset(
     db.delete(result)
     sync_result_count(db, contact_search)
     db.commit()
+
+
+def import_vault_contacts_to_recordset(
+    db: Session,
+    contact_search: ResearchSearch,
+    *,
+    vault_ids: list[int],
+) -> dict[str, int]:
+    """Add contacts from the company vault into a manual contact recordset."""
+    _require_manual_contact_dataset(contact_search)
+    parent = _parent_search(db, contact_search)
+    if not vault_ids:
+        raise ApolloError("Select at least one contact.", status_code=400)
+
+    from app.models import ResearchCompanyContact
+    from app.services.research_service import _dedupe_key
+
+    existing_keys: set[str] = set()
+    for row in (
+        db.execute(
+            select(ResearchResult).where(
+                ResearchResult.search_id == contact_search.id,
+                ResearchResult.entity_type == "person",
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        raw = row.raw_data or {}
+        key = _dedupe_key(
+            apollo_id=row.apollo_id or raw.get("id"),
+            email=raw.get("email"),
+            name=row.name or raw.get("name"),
+        )
+        if key:
+            existing_keys.add(key)
+
+    added = 0
+    skipped = 0
+    for vault_id in vault_ids:
+        contact = db.get(ResearchCompanyContact, vault_id)
+        if not contact or contact.company_search_id != parent.id:
+            skipped += 1
+            continue
+
+        key = _dedupe_key(
+            apollo_id=contact.apollo_id,
+            email=contact.email,
+            name=contact.name,
+        )
+        if key and key in existing_keys:
+            skipped += 1
+            continue
+        if key:
+            existing_keys.add(key)
+
+        raw = dict(contact.raw_data or {})
+        raw["_source_company_result_id"] = contact.company_result_id
+        raw["_vault_id"] = contact.id
+        if not raw.get("_research_source"):
+            raw["_research_source"] = contact.source or "apollo"
+
+        result = ResearchResult(
+            search_id=contact_search.id,
+            entity_type="person",
+            apollo_id=contact.apollo_id,
+            name=display_name("people", raw) or contact.name,
+            raw_data=raw,
+        )
+        db.add(result)
+        contact.people_search_id = contact_search.id
+        added += 1
+
+    sync_result_count(db, contact_search)
+    db.commit()
+    return {"added": added, "skipped": skipped}

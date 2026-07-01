@@ -12,6 +12,7 @@ from app.services.apollo_mapper import employer_domain_from_person, map_person
 from app.services.apollo_service import ApolloError
 from app.services.import_service import normalize_domain
 from app.services.research_service import (
+    _apollo_id_for_result,
     _dedupe_key,
     _flatten_person,
     _person_belongs_to_company,
@@ -157,20 +158,39 @@ def resolve_company_results_for_person(
     domain = normalize_domain(person_raw.get("_research_employer_domain")) or employer_domain_from_person(
         person_raw
     )
-    if not domain:
-        return []
-
-    rows = (
-        db.execute(
-            select(ResearchResult).where(
-                ResearchResult.search_id == parent_search.id,
-                ResearchResult.entity_type == "company",
+    if domain:
+        rows = (
+            db.execute(
+                select(ResearchResult).where(
+                    ResearchResult.search_id == parent_search.id,
+                    ResearchResult.entity_type == "company",
+                )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
-    return [row for row in rows if domain_from_result(row) == domain]
+        matched = [row for row in rows if domain_from_result(row) == domain]
+        if matched:
+            return matched
+
+    org = person_raw.get("organization") or {}
+    org_apollo_id = str(org.get("id") or "").strip() or None
+    if org_apollo_id:
+        rows = (
+            db.execute(
+                select(ResearchResult).where(
+                    ResearchResult.search_id == parent_search.id,
+                    ResearchResult.entity_type == "company",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        matched = [row for row in rows if _apollo_id_for_result(row) == org_apollo_id]
+        if matched:
+            return matched
+
+    return []
 
 
 def sync_person_result_to_vault(
@@ -182,40 +202,26 @@ def sync_person_result_to_vault(
     company_result: ResearchResult | None = None,
 ) -> None:
     person_raw = person_result.raw_data or {}
-    company_domain = domain_from_result(company_result) if company_result else None
-    if company_result and company_domain:
-        if not _person_belongs_to_company(
-            person_raw,
-            company_domain=company_domain,
-            company_result_id=company_result.id,
-            people_search=people_search,
-        ):
-            return
-        upsert_company_contact(
-            db,
-            company_search_id=parent_search.id,
-            company_result_id=company_result.id,
-            person_raw=person_raw,
-            people_search_id=people_search.id,
-            source=(person_raw.get("_research_source") or "apollo"),
-        )
-        return
 
-    for target in resolve_company_results_for_person(
-        db,
-        parent_search=parent_search,
-        company_result=company_result,
-        person_raw=person_raw,
-        people_search=people_search,
-    ):
-        company_domain = domain_from_result(target)
-        if not company_domain:
-            continue
+    if company_result is not None:
+        targets = [company_result]
+    else:
+        targets = resolve_company_results_for_person(
+            db,
+            parent_search=parent_search,
+            company_result=company_result,
+            person_raw=person_raw,
+            people_search=people_search,
+        )
+
+    for target in targets:
+        company_domain = domain_from_result(target) or ""
         if not _person_belongs_to_company(
             person_raw,
             company_domain=company_domain,
             company_result_id=target.id,
             people_search=people_search,
+            company_apollo_id=_apollo_id_for_result(target),
         ):
             continue
         upsert_company_contact(
@@ -263,28 +269,33 @@ def backfill_company_contacts_from_searches(
     parent_search: ResearchSearch,
     company_result: ResearchResult,
 ) -> None:
-    """One-time style backfill from existing people recordsets into the vault."""
+    """Backfill vault rows from existing people recordsets linked to this company."""
     domain = domain_from_result(company_result)
-    if not domain:
-        return
+    parent_id = parent_search.id
+    company_id = company_result.id
 
     existing = db.scalar(
         select(ResearchCompanyContact.id)
-        .where(ResearchCompanyContact.company_result_id == company_result.id)
+        .where(ResearchCompanyContact.company_result_id == company_id)
         .limit(1)
     )
     if existing:
         return
 
+    match_clauses = [
+        ResearchSearch.criteria["_source_search_id"].astext == str(parent_id),
+        ResearchSearch.criteria["_source_search_id"].as_integer() == parent_id,
+        ResearchSearch.criteria["_source_company_result_id"].astext == str(company_id),
+        ResearchSearch.criteria["_source_company_result_id"].as_integer() == company_id,
+    ]
+    if domain:
+        match_clauses.append(ResearchSearch.criteria["_source_company_domain"].astext == domain)
+
     people_searches = (
         db.execute(
             select(ResearchSearch).where(
                 ResearchSearch.query_type == "people",
-                or_(
-                    ResearchSearch.criteria["_source_search_id"].astext == str(parent_search.id),
-                    ResearchSearch.criteria["_source_company_result_id"].astext == str(company_result.id),
-                    ResearchSearch.criteria["_source_company_domain"].astext == domain,
-                ),
+                or_(*match_clauses),
             )
         )
         .scalars()

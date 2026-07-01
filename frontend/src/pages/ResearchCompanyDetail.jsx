@@ -401,10 +401,10 @@ export default function ResearchCompanyDetail() {
                   {contactsLoading
                     ? "Loading contacts…"
                     : contacts.length
-                      ? `${contacts.length} contact(s) linked via domain ${fields.domain || "this domain"} (includes contacts from all linked companies)`
+                      ? `${contacts.length} contact(s) saved for this company`
                       : fields.domain
-                        ? `No contacts found yet for ${fields.domain}. Use “Find contacts” to search Apollo.`
-                        : "No domain on this company — contacts cannot be matched."}
+                        ? "No contacts saved yet. Use “Find contacts” to search Apollo — results are stored here on the company."
+                        : "No domain on this company — enrich first or add a domain to search contacts."}
                 </p>
                 <button
                   className="btn-secondary"
@@ -532,8 +532,8 @@ export default function ResearchCompanyDetail() {
       >
         <form onSubmit={runContactSearch} className="space-y-4">
           <div className="rounded-lg border border-brand-100 bg-brand-50/50 px-4 py-3 text-sm text-ink-600">
-            Searches contacts only at <strong>{fields.domain}</strong>. Add filters to narrow by title, seniority,
-            location, and more. Results are saved as a new contact recordset linked to this company.
+            Searches contacts at <strong>{fields.domain}</strong>. Contacts are saved on this company; the recordset is
+            a named view you can filter or reuse in manual lists.
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

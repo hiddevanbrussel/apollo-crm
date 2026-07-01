@@ -14,6 +14,8 @@ from app.schemas.research import (
     ResearchCompanyOptionList,
     ResearchContactAdd,
     ResearchContactDatasetCreate,
+    ResearchContactVaultImport,
+    ResearchContactVaultImportResult,
     ResearchCreate,
     ResearchDatasetCreate,
     ResearchDatasetImportResult,
@@ -33,6 +35,7 @@ from app.services.research_contact_dataset import (
     add_contact_to_contact_dataset,
     create_manual_contact_dataset,
     delete_contact_from_contact_dataset,
+    import_vault_contacts_to_recordset,
     is_manual_contact_dataset,
     update_contact_in_contact_dataset,
 )
@@ -206,6 +209,28 @@ def add_contact_to_contact_search(
     except ApolloError as exc:
         raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
     return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
+@router.post("/searches/{search_id}/contacts/from-vault", response_model=ResearchContactVaultImportResult)
+def import_contacts_from_vault(
+    search_id: int,
+    payload: ResearchContactVaultImport,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Copy contacts from the company vault into a manual contact recordset."""
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    try:
+        result = import_vault_contacts_to_recordset(
+            db,
+            search,
+            vault_ids=payload.vault_ids,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchContactVaultImportResult(**result)
 
 
 @router.post("/searches/{search_id}/results", response_model=ResearchResultDetail)

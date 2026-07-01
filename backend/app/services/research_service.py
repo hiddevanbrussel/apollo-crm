@@ -214,6 +214,13 @@ def _persist_search(
     db.add(search)
     db.flush()
 
+    if query_type == "people":
+        parent_id = (criteria or {}).get("_source_search_id")
+        if parent_id is not None:
+            parent = db.get(ResearchSearch, int(parent_id))
+            if parent and parent.query_type == "organizations":
+                collected = _assign_employer_domains_from_parent(db, parent, collected)
+
     for raw in collected:
         db.add(
             ResearchResult(
@@ -335,7 +342,7 @@ def run_people_for_domains(
             if key in seen:
                 continue
             seen.add(key)
-            collected.append(raw)
+            collected.append(_tag_person_employer_domain(raw, candidate_domains=batch_domains))
             if len(collected) >= max_records:
                 break
 
@@ -588,6 +595,28 @@ def enrich_results(
         enriched += 1
 
     db.commit()
+
+    if search.query_type == "people" and enriched:
+        parent_id = (search.criteria or {}).get("_source_search_id")
+        if parent_id is not None:
+            from app.services.research_company_contacts import sync_people_search_to_vault
+
+            parent = db.get(ResearchSearch, int(parent_id))
+            if parent and parent.query_type == "organizations":
+                company_result = None
+                company_result_id = (search.criteria or {}).get("_source_company_result_id")
+                if company_result_id is not None:
+                    try:
+                        company_result = db.get(ResearchResult, int(company_result_id))
+                    except (TypeError, ValueError):
+                        company_result = None
+                sync_people_search_to_vault(
+                    db,
+                    parent_search=parent,
+                    people_search=search,
+                    company_result=company_result,
+                )
+
     return {
         "enriched": enriched,
         "skipped": skipped,
@@ -624,11 +653,12 @@ def _person_belongs_to_company(
     company_domain: str,
     company_result_id: int,
     people_search: ResearchSearch,
+    company_apollo_id: str | None = None,
 ) -> bool:
     """Return True when a saved person record belongs to a specific company row."""
     tagged_domain = normalize_domain(person_raw.get("_research_employer_domain"))
     person_domain = tagged_domain or employer_domain_from_person(person_raw)
-    if person_domain and person_domain == company_domain:
+    if company_domain and person_domain and person_domain == company_domain:
         return True
 
     criteria = people_search.criteria or {}
@@ -640,7 +670,85 @@ def _person_belongs_to_company(
         except (TypeError, ValueError):
             pass
 
+    org = person_raw.get("organization") or {}
+    org_apollo_id = str(org.get("id") or "").strip() or None
+    if org_apollo_id and company_apollo_id and org_apollo_id == company_apollo_id:
+        return True
+
     return False
+
+
+def _tag_person_employer_domain(
+    raw: dict[str, Any],
+    *,
+    candidate_domains: list[str] | None = None,
+) -> dict[str, Any]:
+    tagged = dict(raw)
+    if normalize_domain(tagged.get("_research_employer_domain")):
+        return tagged
+    inferred = employer_domain_from_person(tagged)
+    if inferred:
+        tagged["_research_employer_domain"] = inferred
+        return tagged
+    if candidate_domains:
+        normalized = [normalize_domain(d) for d in candidate_domains if normalize_domain(d)]
+        if len(normalized) == 1:
+            tagged["_research_employer_domain"] = normalized[0]
+    return tagged
+
+
+def _assign_employer_domains_from_parent(
+    db: Session,
+    parent_search: ResearchSearch,
+    collected: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp employer domain on people when Apollo search omits organization data."""
+    if parent_search.query_type != "organizations":
+        return collected
+
+    companies = (
+        db.execute(
+            select(ResearchResult).where(
+                ResearchResult.search_id == parent_search.id,
+                ResearchResult.entity_type == "company",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    domain_to_company: dict[str, ResearchResult] = {}
+    apollo_to_company: dict[str, ResearchResult] = {}
+    for company in companies:
+        domain = domain_from_result(company)
+        if domain:
+            domain_to_company[domain] = company
+        apollo_id = _apollo_id_for_result(company)
+        if apollo_id:
+            apollo_to_company[apollo_id] = company
+
+    updated: list[dict[str, Any]] = []
+    for raw in collected:
+        tagged = _tag_person_employer_domain(raw)
+        if normalize_domain(tagged.get("_research_employer_domain")):
+            updated.append(tagged)
+            continue
+
+        org = tagged.get("organization") or {}
+        org_apollo_id = str(org.get("id") or "").strip() or None
+        if org_apollo_id and org_apollo_id in apollo_to_company:
+            company = apollo_to_company[org_apollo_id]
+            domain = domain_from_result(company)
+            if domain:
+                tagged["_research_employer_domain"] = domain
+                updated.append(tagged)
+                continue
+
+        inferred = employer_domain_from_person(tagged)
+        if inferred and inferred in domain_to_company:
+            tagged["_research_employer_domain"] = inferred
+
+        updated.append(tagged)
+    return updated
 
 
 def _company_results_for_domain(
@@ -766,8 +874,6 @@ def list_contacts_for_company_result(
         raise ApolloError("This record is not a company.", status_code=400)
 
     domain = domain_from_result(company_result)
-    if not domain:
-        return {"domain": None, "total": 0, "items": []}
 
     from app.services.research_company_contacts import list_vault_contacts_for_company
 
@@ -783,6 +889,9 @@ def list_contacts_for_company_result(
         )
         if key:
             seen.add(key)
+
+    if not domain:
+        return {"domain": None, "total": len(items), "items": items}
 
     for crm_company in find_by_domain(db, domain):
         crm_contacts = (

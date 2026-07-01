@@ -129,6 +129,13 @@ export default function ResearchDetail() {
   const [contactForm, setContactForm] = useState(emptyContactForm);
   const [savingContact, setSavingContact] = useState(false);
 
+  const [showImportVault, setShowImportVault] = useState(false);
+  const [importCompanyId, setImportCompanyId] = useState("");
+  const [vaultContacts, setVaultContacts] = useState([]);
+  const [loadingVaultContacts, setLoadingVaultContacts] = useState(false);
+  const [selectedVault, setSelectedVault] = useState(new Set());
+  const [importingVault, setImportingVault] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -524,6 +531,66 @@ export default function ResearchDetail() {
     }
   };
 
+  const openImportVault = () => {
+    const parentId = data?.search?.criteria?._source_search_id;
+    setImportCompanyId("");
+    setVaultContacts([]);
+    setSelectedVault(new Set());
+    if (parentId) loadCompanyOptions(parentId);
+    setShowImportVault(true);
+  };
+
+  const loadVaultContactsForCompany = async (companyId, parentId = data?.search?.criteria?._source_search_id) => {
+    if (!companyId || !parentId) {
+      setVaultContacts([]);
+      return;
+    }
+    setLoadingVaultContacts(true);
+    try {
+      const { data: res } = await api.get(
+        `/research/searches/${parentId}/results/${companyId}/contacts`
+      );
+      const items = (res.items || []).filter((ct) => ct.source === "research" && ct.vault_id);
+      setVaultContacts(items);
+      setSelectedVault(new Set());
+    } catch (err) {
+      toast.error(apiError(err));
+      setVaultContacts([]);
+    } finally {
+      setLoadingVaultContacts(false);
+    }
+  };
+
+  const toggleVaultContact = (vaultId) =>
+    setSelectedVault((prev) => {
+      const next = new Set(prev);
+      next.has(vaultId) ? next.delete(vaultId) : next.add(vaultId);
+      return next;
+    });
+
+  const importFromVault = async (e) => {
+    e?.preventDefault();
+    const vaultIds = [...selectedVault];
+    if (!vaultIds.length) {
+      toast.info("Select at least one contact.");
+      return;
+    }
+    setImportingVault(true);
+    try {
+      const { data } = await api.post(`/research/searches/${id}/contacts/from-vault`, {
+        vault_ids: vaultIds,
+      });
+      toast.success(`${data.added} added${data.skipped ? `, ${data.skipped} skipped` : ""}.`);
+      setShowImportVault(false);
+      setPage(1);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setImportingVault(false);
+    }
+  };
+
   const search = data?.search;
   const isOrg = search?.query_type === "organizations";
   const isManualDataset = search?.criteria?._dataset_source === "manual";
@@ -607,9 +674,14 @@ export default function ResearchDetail() {
             </button>
           )}
           {isManualContactDataset && (
-            <button className="btn-primary" onClick={openAddContact}>
-              <Icon.Plus width={18} height={18} /> Add contact
-            </button>
+            <>
+              <button className="btn-primary" onClick={openAddContact}>
+                <Icon.Plus width={18} height={18} /> Add contact
+              </button>
+              <button className="btn-secondary" onClick={openImportVault}>
+                <Icon.Download width={18} height={18} /> Import from company
+              </button>
+            </>
           )}
           {isOrg ? (
             <ActionMenu
@@ -872,9 +944,9 @@ export default function ResearchDetail() {
       >
         <form onSubmit={runContactSearch} className="space-y-4">
           <div className="rounded-lg border border-brand-100 bg-brand-50/50 px-4 py-3 text-sm text-ink-600">
-            Searches contacts only at the <strong>{domainInfo?.domainCount ?? 0}</strong> domains from this company
-            research ({domainInfo?.companyCount ?? 0} companies). Add filters below to narrow by title, seniority,
-            location, and more.
+            Searches contacts at the <strong>{domainInfo?.domainCount ?? 0}</strong> domains from this company
+            research ({domainInfo?.companyCount ?? 0} companies). Contacts are saved on each company; the recordset is
+            a named view of those results.
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1093,6 +1165,86 @@ export default function ResearchDetail() {
               onChange={(e) => setContactForm({ ...contactForm, linkedin_url: e.target.value })}
             />
           </Field>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showImportVault}
+        onClose={() => !importingVault && setShowImportVault(false)}
+        title="Import from company contacts"
+        wide
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowImportVault(false)} disabled={importingVault}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={importFromVault} disabled={importingVault || selectedVault.size === 0}>
+              {importingVault ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : null}
+              Import {selectedVault.size || ""} contact{selectedVault.size === 1 ? "" : "s"}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={importFromVault} className="space-y-4">
+          <p className="text-sm text-ink-600">
+            Pick contacts already saved on a company. Contact recordsets are views — the company keeps the master list.
+          </p>
+          <Field label="Company *">
+            <select
+              className="input"
+              required
+              value={importCompanyId}
+              onChange={(e) => {
+                setImportCompanyId(e.target.value);
+                loadVaultContactsForCompany(e.target.value);
+              }}
+            >
+              <option value="">Select company…</option>
+              {companyOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.name}
+                  {opt.domain ? ` (${opt.domain})` : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {loadingVaultContacts ? (
+            <div className="flex justify-center py-8">
+              <Spinner className="h-5 w-5" />
+            </div>
+          ) : importCompanyId && vaultContacts.length === 0 ? (
+            <p className="text-sm text-ink-500">No saved contacts for this company yet. Run a contact search first.</p>
+          ) : vaultContacts.length > 0 ? (
+            <div className="max-h-80 overflow-y-auto rounded-lg border border-ink-200">
+              <table className="w-full">
+                <thead className="sticky top-0 border-b border-ink-100 bg-ink-50/90">
+                  <tr>
+                    <th className="table-th w-10"></th>
+                    <th className="table-th">Name</th>
+                    <th className="table-th">Title</th>
+                    <th className="table-th">Email</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-ink-100">
+                  {vaultContacts.map((ct) => (
+                    <tr key={ct.vault_id} className="hover:bg-ink-50/60">
+                      <td className="table-td">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-ink-300 text-brand-600"
+                          checked={selectedVault.has(ct.vault_id)}
+                          onChange={() => toggleVaultContact(ct.vault_id)}
+                        />
+                      </td>
+                      <td className="table-td font-medium">{ct.name || "—"}</td>
+                      <td className="table-td">{ct.title || "—"}</td>
+                      <td className="table-td">{ct.email || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </form>
       </Modal>
     </div>

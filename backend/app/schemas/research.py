@@ -29,6 +29,15 @@ class ResearchContactAdd(BaseModel):
     linkedin_url: str | None = None
 
 
+class ResearchContactVaultImport(BaseModel):
+    vault_ids: list[int] = Field(..., min_length=1)
+
+
+class ResearchContactVaultImportResult(BaseModel):
+    added: int = 0
+    skipped: int = 0
+
+
 class ResearchCompanyOption(BaseModel):
     id: int
     name: str | None = None
@@ -138,6 +147,8 @@ class ResearchCompanyContactOut(BaseModel):
     research_search_id: int | None = None
     research_search_name: str | None = None
     company_id: int | None = None
+    vault_id: int | None = None
+    company_result_id: int | None = None
 
 
 class ResearchCompanyContactsOut(BaseModel):
