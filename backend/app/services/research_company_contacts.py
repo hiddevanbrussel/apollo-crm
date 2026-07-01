@@ -122,6 +122,8 @@ def upsert_company_contact(
         "raw_data": person_raw,
     }
     if existing:
+        if is_enriched(existing.raw_data or {}) and not is_enriched(person_raw):
+            payload.pop("raw_data", None)
         for key, value in payload.items():
             if value not in (None, ""):
                 setattr(existing, key, value)
@@ -274,14 +276,6 @@ def backfill_company_contacts_from_searches(
     parent_id = parent_search.id
     company_id = company_result.id
 
-    existing = db.scalar(
-        select(ResearchCompanyContact.id)
-        .where(ResearchCompanyContact.company_result_id == company_id)
-        .limit(1)
-    )
-    if existing:
-        return
-
     match_clauses = [
         ResearchSearch.criteria["_source_search_id"].astext == str(parent_id),
         ResearchSearch.criteria["_source_search_id"].as_integer() == parent_id,
@@ -308,6 +302,45 @@ def backfill_company_contacts_from_searches(
             people_search=people_search,
             company_result=company_result,
         )
+
+
+def sync_vault_from_child_searches(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+) -> None:
+    """Ensure the company vault reflects contacts from all linked people recordsets."""
+    parent_id = parent_search.id
+    people_searches = (
+        db.execute(
+            select(ResearchSearch).where(
+                ResearchSearch.query_type == "people",
+                or_(
+                    ResearchSearch.criteria["_source_search_id"].astext == str(parent_id),
+                    ResearchSearch.criteria["_source_search_id"].as_integer() == parent_id,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for people_search in people_searches:
+        company_result = None
+        company_result_id = (people_search.criteria or {}).get("_source_company_result_id")
+        if company_result_id is not None:
+            try:
+                row = db.get(ResearchResult, int(company_result_id))
+                if row and row.search_id == parent_search.id:
+                    company_result = row
+            except (TypeError, ValueError):
+                company_result = None
+        sync_people_search_to_vault(
+            db,
+            parent_search=parent_search,
+            people_search=people_search,
+            company_result=company_result,
+        )
+    db.commit()
 
 
 def list_vault_contacts_for_company(
@@ -371,6 +404,240 @@ class _CriteriaSearch:
 
     def __init__(self, criteria: dict[str, Any]):
         self.criteria = criteria
+
+
+def load_vault_contacts_by_company(
+    db: Session,
+    *,
+    company_search_id: int,
+) -> dict[int, list[ResearchCompanyContact]]:
+    """Vault contacts grouped by company row id."""
+    rows = (
+        db.execute(
+            select(ResearchCompanyContact)
+            .where(ResearchCompanyContact.company_search_id == company_search_id)
+            .order_by(ResearchCompanyContact.updated_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[int, list[ResearchCompanyContact]] = {}
+    for row in rows:
+        grouped.setdefault(int(row.company_result_id), []).append(row)
+    return grouped
+
+
+def _normalize_linkedin(url: str | None) -> str | None:
+    if not url or not str(url).strip():
+        return None
+    value = str(url).strip().lower().rstrip("/")
+    for prefix in ("https://", "http://", "www."):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+    return value.split("?")[0] or None
+
+
+def _person_identity(
+    person_raw: dict[str, Any],
+    *,
+    apollo_id: str | None = None,
+    email: str | None = None,
+    name: str | None = None,
+    linkedin_url: str | None = None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    fields = _flatten_person(person_raw)
+    resolved_apollo = (
+        str(apollo_id or person_raw.get("id") or fields.get("apollo_id") or "").strip() or None
+    )
+    resolved_email = (email or fields.get("email") or person_raw.get("email") or "").strip().lower() or None
+    resolved_name = (name or fields.get("name") or person_raw.get("name") or "").strip().lower() or None
+    resolved_linkedin = _normalize_linkedin(
+        linkedin_url or fields.get("linkedin_url") or person_raw.get("linkedin_url")
+    )
+    return resolved_apollo, resolved_email, resolved_name, resolved_linkedin
+
+
+def person_raw_matches_person(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Match two person payloads (apollo id, email, linkedin, name)."""
+    person_apollo, person_email, person_name, person_linkedin = _person_identity(left)
+    contact_apollo, contact_email, contact_name, contact_linkedin = _person_identity(right)
+
+    if person_apollo and contact_apollo and str(person_apollo) == str(contact_apollo):
+        return True
+    if person_email and contact_email and person_email == contact_email:
+        return True
+    if person_linkedin and contact_linkedin and person_linkedin == contact_linkedin:
+        return True
+    if person_name and contact_name and person_name == contact_name:
+        if person_apollo and contact_apollo and str(person_apollo) != str(contact_apollo):
+            return False
+        return True
+    return False
+
+
+def vault_contact_matches_person(
+    contact: ResearchCompanyContact,
+    person_raw: dict[str, Any],
+) -> bool:
+    """Match a search hit to an existing vault row (apollo id, email, linkedin, name)."""
+    vault_raw = contact.raw_data or {}
+    vault_fields = _flatten_person(vault_raw)
+    known = {
+        **vault_raw,
+        "id": contact.apollo_id or vault_raw.get("id") or vault_fields.get("apollo_id"),
+        "email": contact.email or vault_fields.get("email"),
+        "name": contact.name or vault_fields.get("name"),
+        "linkedin_url": contact.linkedin_url or vault_fields.get("linkedin_url"),
+    }
+    return person_raw_matches_person(person_raw, known)
+
+
+def find_matching_vault_contact(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    person_raw: dict[str, Any],
+    vault_by_company: dict[int, list[ResearchCompanyContact]],
+    company_result: ResearchResult | None = None,
+    people_criteria: dict[str, Any] | None = None,
+) -> ResearchCompanyContact | None:
+    if not vault_by_company:
+        return None
+
+    if company_result is not None:
+        targets = [company_result]
+    else:
+        criteria = people_criteria or {}
+        fake_search = _CriteriaSearch(criteria)
+        targets = resolve_company_results_for_person(
+            db,
+            parent_search=parent_search,
+            company_result=None,
+            person_raw=person_raw,
+            people_search=fake_search,  # type: ignore[arg-type]
+        )
+
+    for target in targets:
+        for contact in vault_by_company.get(target.id, []):
+            if vault_contact_matches_person(contact, person_raw):
+                return contact
+
+    if company_result is not None:
+        return None
+
+    criteria = people_criteria or {}
+    fake_search = _CriteriaSearch(criteria)
+    for company_result_id, contacts in vault_by_company.items():
+        target_row = db.get(ResearchResult, company_result_id)
+        if not target_row:
+            continue
+        company_domain = domain_from_result(target_row) or ""
+        for contact in contacts:
+            if not vault_contact_matches_person(contact, person_raw):
+                continue
+            if _person_belongs_to_company(
+                person_raw,
+                company_domain=company_domain,
+                company_result_id=company_result_id,
+                people_search=fake_search,  # type: ignore[arg-type]
+                company_apollo_id=_apollo_id_for_result(target_row),
+            ):
+                return contact
+    return None
+
+
+def find_matching_prior_person_raw(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    person_raw: dict[str, Any],
+    company_result: ResearchResult | None = None,
+) -> dict[str, Any] | None:
+    """Fallback: match against saved rows in earlier people recordsets."""
+    parent_id = parent_search.id
+    people_searches = (
+        db.execute(
+            select(ResearchSearch).where(
+                ResearchSearch.query_type == "people",
+                or_(
+                    ResearchSearch.criteria["_source_search_id"].astext == str(parent_id),
+                    ResearchSearch.criteria["_source_search_id"].as_integer() == parent_id,
+                ),
+            )
+            .order_by(ResearchSearch.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+    best: dict[str, Any] | None = None
+    for people_search in people_searches:
+        criteria = people_search.criteria or {}
+        source_result_id = criteria.get("_source_company_result_id")
+        if company_result is not None and source_result_id is not None:
+            try:
+                if int(source_result_id) != company_result.id:
+                    continue
+            except (TypeError, ValueError):
+                pass
+
+        results = (
+            db.execute(
+                select(ResearchResult).where(
+                    ResearchResult.search_id == people_search.id,
+                    ResearchResult.entity_type == "person",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for result in results:
+            prior_raw = result.raw_data or {}
+            if not person_raw_matches_person(person_raw, prior_raw):
+                continue
+            if is_enriched(prior_raw):
+                return prior_raw
+            if best is None:
+                best = prior_raw
+    return best
+
+
+def merge_person_with_known_profile(
+    person_raw: dict[str, Any],
+    known_raw: dict[str, Any],
+    *,
+    vault_contact_id: int | None = None,
+) -> dict[str, Any]:
+    """Use an enriched profile already known for this company in a new recordset row."""
+    search_apollo_id = person_raw.get("id")
+
+    if is_enriched(known_raw):
+        merged = dict(known_raw)
+    else:
+        merged = {**dict(known_raw), **{k: v for k, v in person_raw.items() if v not in (None, "")}}
+
+    merged = dict(merged)
+    if search_apollo_id:
+        merged["id"] = search_apollo_id
+    merged["_already_at_company"] = True
+    if vault_contact_id is not None:
+        merged["_vault_contact_id"] = vault_contact_id
+    employer_domain = person_raw.get("_research_employer_domain") or merged.get("_research_employer_domain")
+    if employer_domain:
+        merged["_research_employer_domain"] = employer_domain
+    return merged
+
+
+def merge_person_with_vault_contact(
+    person_raw: dict[str, Any],
+    contact: ResearchCompanyContact,
+) -> dict[str, Any]:
+    """Use enriched vault profile in the new recordset row when already known at the company."""
+    return merge_person_with_known_profile(
+        person_raw,
+        contact.raw_data or {},
+        vault_contact_id=contact.id,
+    )
 
 
 def load_vault_apollo_ids_by_company(

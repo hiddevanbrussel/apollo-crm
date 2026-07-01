@@ -201,6 +201,7 @@ def _persist_search(
     collected: list[dict[str, Any]],
     total_available: int | None,
     created_by: int | None,
+    skip_assign_employer_domains: bool = False,
 ) -> ResearchSearch:
     entity_type = "company" if query_type == "organizations" else "person"
     search = ResearchSearch(
@@ -214,7 +215,7 @@ def _persist_search(
     db.add(search)
     db.flush()
 
-    if query_type == "people":
+    if query_type == "people" and not skip_assign_employer_domains:
         parent_id = (criteria or {}).get("_source_search_id")
         if parent_id is not None:
             parent = db.get(ResearchSearch, int(parent_id))
@@ -222,11 +223,12 @@ def _persist_search(
                 collected = _assign_employer_domains_from_parent(db, parent, collected)
 
     for raw in collected:
+        apollo_id = raw.get("id")
         db.add(
             ResearchResult(
                 search_id=search.id,
                 entity_type=entity_type,
-                apollo_id=raw.get("id"),
+                apollo_id=apollo_id,
                 name=display_name(query_type, raw),
                 raw_data=raw,
             )
@@ -304,31 +306,43 @@ def _mark_existing_at_company_on_people(
     criteria: dict[str, Any],
     company_result: ResearchResult | None = None,
 ) -> list[dict[str, Any]]:
-    """Tag people already stored on a company vault row (still included in the recordset)."""
+    """Tag people already on the company vault; merge enriched profile when matched."""
     from app.services.research_company_contacts import (
-        load_vault_apollo_ids_by_company,
-        person_already_in_company_vault,
+        find_matching_prior_person_raw,
+        find_matching_vault_contact,
+        load_vault_contacts_by_company,
+        merge_person_with_known_profile,
+        merge_person_with_vault_contact,
+        sync_vault_from_child_searches,
     )
 
-    vault_apollo_ids_by_company = load_vault_apollo_ids_by_company(
-        db, company_search_id=parent_search.id
-    )
-    if not vault_apollo_ids_by_company:
-        return collected
+    sync_vault_from_child_searches(db, parent_search=parent_search)
+    vault_by_company = load_vault_contacts_by_company(db, company_search_id=parent_search.id)
 
     marked: list[dict[str, Any]] = []
     for raw in collected:
-        tagged = dict(raw)
-        if person_already_in_company_vault(
+        contact = find_matching_vault_contact(
             db,
             parent_search=parent_search,
-            person_raw=tagged,
-            vault_apollo_ids_by_company=vault_apollo_ids_by_company,
+            person_raw=raw,
+            vault_by_company=vault_by_company,
             company_result=company_result,
             people_criteria=criteria,
-        ):
-            tagged["_already_at_company"] = True
-        marked.append(tagged)
+        )
+        if contact:
+            marked.append(merge_person_with_vault_contact(raw, contact))
+            continue
+
+        prior_raw = find_matching_prior_person_raw(
+            db,
+            parent_search=parent_search,
+            person_raw=raw,
+            company_result=company_result,
+        )
+        if prior_raw:
+            marked.append(merge_person_with_known_profile(raw, prior_raw))
+        else:
+            marked.append(dict(raw))
     return marked
 
 
@@ -405,6 +419,7 @@ def run_people_for_domains(
         collected=collected,
         total_available=total_available,
         created_by=created_by,
+        skip_assign_employer_domains=True,
     )
 
 
