@@ -95,7 +95,11 @@ def _title_word(word: str, *, is_first: bool) -> str:
 def normalize_industry(value: str | None) -> str | None:
     if value is None:
         return None
-    raw = str(value).strip()
+    if isinstance(value, list):
+        value = next((item for item in value if item not in (None, "", [])), None)
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("value")
+    raw = str(value).strip() if value is not None else ""
     if not raw:
         return None
 

@@ -33,6 +33,7 @@ from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
 from app.services.company_domains import add_domain, list_domains
+from app.services.company_enrich import apply_apollo_organization_to_company, organization_from_response
 from app.services.company_export import export_csv, export_xlsx
 from app.services.company_filters import (
     SEGMENT_KEYS,
@@ -391,19 +392,12 @@ def _enrich_company_inline(db: Session, client, company: Company) -> bool:
             )
         )
         return False
-    org = response.get("organization") or {}
-    mapped = map_organization(org)
-    for key, value in mapped.items():
-        if key in {"source", "name"} or value in (None, ""):
-            continue
-        if key == "domain" and value.lower() != (company.domain or "").lower():
-            clash = db.execute(
-                select(Company).where(func.lower(Company.domain) == value.lower())
-            ).scalar_one_or_none()
-            if clash and clash.id != company.id:
-                continue
-        if hasattr(company, key):
-            setattr(company, key, value)
+    try:
+        org = organization_from_response(response)
+        apply_apollo_organization_to_company(db, company, org)
+    except ApolloError:
+        company.enrichment_status = "failed"
+        return False
     company.enrichment_status = "enriched"
     db.add(
         EnrichmentLog(
@@ -706,13 +700,14 @@ def enrich_company(company_id: int, db: Session = Depends(get_db), _: User = Dep
         db.commit()
         raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
 
-    org = response.get("organization") or {}
-    mapped = map_organization(org)
-    for key, value in mapped.items():
-        if key in {"source"}:
-            continue
-        if value not in (None, "") and hasattr(company, key):
-            setattr(company, key, value)
+    try:
+        org = organization_from_response(response)
+        apply_apollo_organization_to_company(db, company, org, update_name=True)
+    except ApolloError as exc:
+        company.enrichment_status = "failed"
+        db.commit()
+        raise HTTPException(status_code=exc.status_code or 502, detail=exc.message)
+
     company.enrichment_status = "enriched"
     db.add(
         EnrichmentLog(
@@ -723,7 +718,14 @@ def enrich_company(company_id: int, db: Session = Depends(get_db), _: User = Dep
             response_status=200,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Enriched data could not be saved (duplicate Apollo id or invalid field value).",
+        ) from exc
     db.refresh(company)
     return _with_contact_count(db, company)
 
