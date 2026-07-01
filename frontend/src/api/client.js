@@ -1,8 +1,9 @@
 import axios from "axios";
 
-// Empty baseURL in production: nginx proxies /auth, /companies, … to the backend.
+// Production: same-origin /api via nginx. Dev: backend on :8000 with /api prefix.
 const baseURL =
-  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "");
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? "http://localhost:8000/api" : "/api");
 
 const api = axios.create({ baseURL });
 

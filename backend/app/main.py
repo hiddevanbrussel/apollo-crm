@@ -46,7 +46,7 @@ def health():
     return {"status": "ok"}
 
 
-api_prefix = ""
+api_prefix = "/api"
 app.include_router(auth.router, prefix=api_prefix)
 app.include_router(dashboard.router, prefix=api_prefix)
 app.include_router(companies.router, prefix=api_prefix)

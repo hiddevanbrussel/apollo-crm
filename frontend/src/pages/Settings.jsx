@@ -1309,7 +1309,7 @@ export default function Settings() {
               <li>
                 Redirect URI (Web):{" "}
                 <code className="rounded bg-white px-1 py-0.5 text-ink-800">
-                  {azureRedirectUri || azureAd.suggested_redirect_uri || "https://your-domain/auth/azure/callback"}
+                  {azureRedirectUri || azureAd.suggested_redirect_uri || "https://your-domain/api/auth/azure/callback"}
                 </code>
               </li>
               <li>Copy the Application (client) ID and create a client secret below.</li>
@@ -1360,7 +1360,7 @@ export default function Settings() {
               className="input font-mono text-xs"
               value={azureRedirectUri}
               onChange={(e) => setAzureRedirectUri(e.target.value)}
-              placeholder={azureAd.suggested_redirect_uri || "https://your-domain/auth/azure/callback"}
+              placeholder={azureAd.suggested_redirect_uri || "https://your-domain/api/auth/azure/callback"}
             />
             <p className="mt-1 text-xs text-ink-400">
               Must match the redirect URI in Azure. Leave empty to use the suggested value above.

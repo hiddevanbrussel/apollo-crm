@@ -37,7 +37,7 @@ def build_contact_webhook_url(contact_id: int) -> str | None:
     if not base:
         return None
     secret = get_webhook_secret()
-    return f"{base}/webhooks/apollo/{secret}/contacts/{contact_id}"
+    return f"{base}/api/webhooks/apollo/{secret}/contacts/{contact_id}"
 
 
 def redact_match_log_payload(payload: dict[str, Any]) -> dict[str, Any]:

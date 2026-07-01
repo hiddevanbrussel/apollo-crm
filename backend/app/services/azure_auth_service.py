@@ -53,10 +53,10 @@ def is_azure_configured(row: AzureAdSettings) -> bool:
 
 def suggest_redirect_uri() -> str:
     if settings.PUBLIC_BASE_URL:
-        return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/auth/azure/callback"
+        return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/auth/azure/callback"
     if settings.cors_origins:
-        return f"{settings.cors_origins[0].rstrip('/')}/auth/azure/callback"
-    return "http://localhost:8080/auth/azure/callback"
+        return f"{settings.cors_origins[0].rstrip('/')}/api/auth/azure/callback"
+    return "http://localhost:8080/api/auth/azure/callback"
 
 
 def get_redirect_uri(row: AzureAdSettings) -> str:
@@ -67,7 +67,7 @@ def get_redirect_uri(row: AzureAdSettings) -> str:
 
 def get_frontend_base(row: AzureAdSettings) -> str:
     redirect = get_redirect_uri(row)
-    suffix = "/auth/azure/callback"
+    suffix = "/api/auth/azure/callback"
     if redirect.endswith(suffix):
         return redirect[: -len(suffix)]
     if settings.PUBLIC_BASE_URL:

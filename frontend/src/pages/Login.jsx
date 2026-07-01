@@ -46,7 +46,7 @@ export default function Login() {
   };
 
   const signInWithMicrosoft = () => {
-    window.location.href = "/auth/azure/login";
+    window.location.href = "/api/auth/azure/login";
   };
 
   return (
