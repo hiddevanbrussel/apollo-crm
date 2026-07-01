@@ -141,16 +141,42 @@ export function EmptyState({ title, description, action }) {
   );
 }
 
-export function Pagination({ page, pageSize, total, onPage }) {
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  onPage,
+  pageSizeOptions,
+  onPageSize,
+}) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   if (total === 0) return null;
   const from = (page - 1) * pageSize + 1;
   const to = Math.min(total, page * pageSize);
   return (
-    <div className="flex items-center justify-between border-t border-ink-100 px-4 py-3">
-      <p className="text-sm text-ink-500">
-        {from}–{to} of {total}
-      </p>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-ink-500">
+          {from}–{to} of {total}
+        </p>
+        {pageSizeOptions?.length && onPageSize ? (
+          <label className="flex items-center gap-2 text-sm text-ink-500">
+            Show
+            <select
+              className="input w-auto py-1.5 pl-2 pr-8 text-sm"
+              value={pageSize}
+              onChange={(e) => onPageSize(Number(e.target.value))}
+              aria-label="Rows per page"
+            >
+              {pageSizeOptions.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
       <div className="flex items-center gap-2">
         <button
           className="btn-secondary px-2 py-1.5"

@@ -11,6 +11,8 @@ const EMPTY = { name: "", domain: "", website: "", industry: "", country: "", ci
 
 const EMPTY_FILTERS = { industry: "", country: "", city: "", market_segment: "", tier: "", employees: "", status: "" };
 
+const PAGE_SIZE_OPTIONS = [20, 30, 40, 50, 100];
+
 function buildFilterParams(search, filters) {
   return {
     search: search || undefined,
@@ -84,7 +86,7 @@ export default function Companies() {
   const [bulkEnriching, setBulkEnriching] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
-  const pageSize = 20;
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -119,7 +121,12 @@ export default function Companies() {
     } finally {
       setLoading(false);
     }
-  }, [search, filters, page, toast, user]);
+  }, [search, filters, page, pageSize, toast, user]);
+
+  const handlePageSize = (size) => {
+    setPage(1);
+    setPageSize(size);
+  };
 
   useEffect(() => {
     if (authLoading || !user) return;
@@ -506,7 +513,16 @@ export default function Companies() {
             </table>
           </div>
         )}
-        {data && <Pagination page={page} pageSize={pageSize} total={data.total} onPage={setPage} />}
+        {data && (
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={data.total}
+            onPage={setPage}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSize={handlePageSize}
+          />
+        )}
       </div>
       </div>
 

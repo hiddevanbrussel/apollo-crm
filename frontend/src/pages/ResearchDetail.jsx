@@ -73,6 +73,8 @@ function CellValue({ column, row, isOrg, searchId }) {
   return String(value);
 }
 
+const PAGE_SIZE_OPTIONS = [20, 30, 40, 50, 100];
+
 export default function ResearchDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -80,7 +82,7 @@ export default function ResearchDetail() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const pageSize = 20;
+  const [pageSize, setPageSize] = useState(20);
 
   const [showContacts, setShowContacts] = useState(false);
   const [domainInfo, setDomainInfo] = useState(null);
@@ -149,7 +151,12 @@ export default function ResearchDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, page, toast]);
+  }, [id, page, pageSize, toast]);
+
+  const handlePageSize = (size) => {
+    setPage(1);
+    setPageSize(size);
+  };
 
   useEffect(() => {
     load();
@@ -873,7 +880,14 @@ export default function ResearchDetail() {
               </table>
             </div>
             <div className="border-t border-ink-100 px-4 py-3">
-              <Pagination page={page} pageSize={pageSize} total={data.total} onPage={setPage} />
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                total={data.total}
+                onPage={setPage}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSize={handlePageSize}
+              />
             </div>
           </>
         )}
