@@ -194,6 +194,20 @@ def list_searches(db: Session = Depends(get_db), _: User = Depends(get_current_u
     return ResearchSearchList(items=[ResearchSearchOut.model_validate(r) for r in rows])
 
 
+@router.get("/searches/{search_id}/children", response_model=ResearchSearchList)
+def list_search_children(
+    search_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Contact recordsets initiated from a company recordset."""
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    rows = research_service.list_child_searches(db, search)
+    return ResearchSearchList(items=[ResearchSearchOut.model_validate(r) for r in rows])
+
+
 @router.get("/searches/{search_id}/domains")
 def list_search_domains(
     search_id: int,

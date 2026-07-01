@@ -97,6 +97,8 @@ export default function ResearchDetail() {
   });
   const [savingCompany, setSavingCompany] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [childSearches, setChildSearches] = useState([]);
+  const [loadingChildren, setLoadingChildren] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,6 +118,16 @@ export default function ResearchDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!id) return;
+    setLoadingChildren(true);
+    api
+      .get(`/research/searches/${id}/children`)
+      .then((res) => setChildSearches(res.data.items || []))
+      .catch(() => setChildSearches([]))
+      .finally(() => setLoadingChildren(false));
+  }, [id, data?.search?.updated_at]);
 
   useEffect(() => {
     api
@@ -203,6 +215,8 @@ export default function ResearchDetail() {
         `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
       );
       setShowContacts(false);
+      load();
+      api.get(`/research/searches/${id}/children`).then((res) => setChildSearches(res.data.items || []));
       navigate(`/research/${created.id}`);
     } catch (err) {
       toast.error(apiError(err));
@@ -368,7 +382,7 @@ export default function ResearchDetail() {
           </p>
           {sourceSearchId ? (
             <p className="mt-1 text-sm text-ink-500">
-              Based on company research{" "}
+              Contact search from recordset{" "}
               <Link to={`/research/${sourceSearchId}`} className="font-medium text-brand-600 hover:underline">
                 {sourceSearchName || `#${sourceSearchId}`}
               </Link>
@@ -437,6 +451,38 @@ export default function ResearchDetail() {
           </button>
         </div>
       </div>
+
+      {isOrg && (loadingChildren || childSearches.length > 0) ? (
+        <div className="card">
+          <div className="border-b border-ink-100 px-5 py-4">
+            <h2 className="text-sm font-semibold text-ink-900">Contact recordsets</h2>
+            <p className="mt-0.5 text-xs text-ink-500">People searches started from this company recordset.</p>
+          </div>
+          {loadingChildren ? (
+            <div className="flex justify-center py-8">
+              <Spinner className="h-5 w-5" />
+            </div>
+          ) : (
+            <div className="divide-y divide-ink-100">
+              {childSearches.map((child) => (
+                <div key={child.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                  <div className="min-w-0">
+                    <Link to={`/research/${child.id}`} className="font-medium text-ink-900 hover:text-brand-600">
+                      {child.name}
+                    </Link>
+                    <p className="text-xs text-ink-500">
+                      {child.result_count} contacts · {new Date(child.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <Link to={`/research/${child.id}`} className="btn-secondary text-sm">
+                    <Icon.Users width={16} height={16} /> View contacts
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="card">
         {selected.size > 0 && (

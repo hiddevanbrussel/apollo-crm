@@ -114,6 +114,25 @@ def domains_from_company_search(db: Session, search: ResearchSearch) -> list[str
     return domains
 
 
+def list_child_searches(db: Session, parent_search: ResearchSearch) -> list[ResearchSearch]:
+    """People recordsets created from a company recordset (contact searches)."""
+    parent_id = parent_search.id
+    return list(
+        db.execute(
+            select(ResearchSearch)
+            .where(
+                or_(
+                    ResearchSearch.criteria["_source_search_id"].astext == str(parent_id),
+                    ResearchSearch.criteria["_source_search_id"].as_integer() == parent_id,
+                )
+            )
+            .order_by(ResearchSearch.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+
 def _collect_from_apollo(
     client: ApolloService,
     *,

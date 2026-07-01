@@ -13,6 +13,115 @@ import {
 } from "../constants/apolloSearchFields";
 import { useToast } from "../context/ToastContext";
 
+function parentSearchId(search) {
+  const id = search.criteria?._source_search_id;
+  return id != null && id !== "" ? Number(id) : null;
+}
+
+function buildResearchTree(searches) {
+  const nodes = searches.map((search) => ({ search, children: [] }));
+  const byId = new Map(nodes.map((node) => [node.search.id, node]));
+  const roots = [];
+
+  for (const node of nodes) {
+    const parentId = parentSearchId(node.search);
+    const parent = parentId ? byId.get(parentId) : null;
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const byDate = (a, b) => new Date(b.search.created_at) - new Date(a.search.created_at);
+  const sortTree = (list) => {
+    list.sort(byDate);
+    list.forEach((node) => sortTree(node.children));
+  };
+  sortTree(roots);
+  return roots;
+}
+
+function ResearchTypeBadge({ search }) {
+  if (search.criteria?._source_search_id) {
+    return <span className="badge bg-sky-50 text-sky-700">Contacts</span>;
+  }
+  if (search.criteria?._dataset_source === "manual") {
+    return <span className="badge bg-violet-50 text-violet-700">Manual list</span>;
+  }
+  return <span className="capitalize">{search.query_type === "people" ? "People" : "Companies"}</span>;
+}
+
+function ResearchSearchRows({ node, depth, exportSearch, remove }) {
+  const { search, children } = node;
+  const isChild = depth > 0;
+
+  return (
+    <>
+      <tr className={isChild ? "bg-sky-50/20 hover:bg-sky-50/40" : "hover:bg-ink-50/60"}>
+        <td className="table-td">
+          <div className="flex items-start gap-2" style={{ paddingLeft: depth * 24 }}>
+            {isChild ? (
+              <span className="mt-1 text-ink-300" aria-hidden>
+                └
+              </span>
+            ) : null}
+            <div className="min-w-0">
+              <Link to={`/research/${search.id}`} className="font-medium text-ink-900 hover:text-brand-600">
+                {search.name}
+              </Link>
+              {!isChild && search.criteria?._source_search_name ? (
+                <p className="mt-0.5 text-xs text-ink-400">
+                  From{" "}
+                  <Link
+                    to={`/research/${search.criteria._source_search_id}`}
+                    className="text-brand-600 hover:underline"
+                  >
+                    {search.criteria._source_search_name}
+                  </Link>
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </td>
+        <td className="table-td">
+          <ResearchTypeBadge search={search} />
+        </td>
+        <td className="table-td">
+          {search.result_count}
+          {search.total_available ? <span className="text-ink-400"> / {search.total_available}</span> : null}
+        </td>
+        <td className="table-td text-ink-500">{new Date(search.created_at).toLocaleString()}</td>
+        <td className="table-td">
+          <div className="flex items-center justify-end gap-1">
+            <Link to={`/research/${search.id}`} className="btn-ghost px-2 py-1 text-sm">
+              View
+            </Link>
+            <button className="btn-ghost px-2 py-1 text-sm" onClick={() => exportSearch(search, "csv")}>
+              <Icon.Download width={15} height={15} /> CSV
+            </button>
+            <button className="btn-ghost px-2 py-1 text-sm" onClick={() => exportSearch(search, "xlsx")}>
+              <Icon.Download width={15} height={15} /> Excel
+            </button>
+            <button className="btn-ghost px-2 py-1 text-red-500" onClick={() => remove(search)}>
+              <Icon.Trash width={15} height={15} />
+            </button>
+          </div>
+        </td>
+      </tr>
+      {children.map((child) => (
+        <ResearchSearchRows
+          key={child.search.id}
+          node={child}
+          depth={depth + 1}
+          exportSearch={exportSearch}
+          remove={remove}
+        />
+      ))}
+    </>
+  );
+}
+
 export default function MarketResearch() {
   const toast = useToast();
   const navigate = useNavigate();
@@ -167,6 +276,8 @@ export default function MarketResearch() {
     }
   };
 
+  const researchTree = buildResearchTree(searches);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -223,42 +334,14 @@ export default function MarketResearch() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
-                {searches.map((s) => (
-                  <tr key={s.id} className="hover:bg-ink-50/60">
-                    <td className="table-td">
-                      <Link to={`/research/${s.id}`} className="font-medium text-ink-900 hover:text-brand-600">
-                        {s.name}
-                      </Link>
-                    </td>
-                    <td className="table-td">
-                      {s.criteria?._dataset_source === "manual" ? (
-                        <span className="badge bg-violet-50 text-violet-700">Manual list</span>
-                      ) : (
-                        <span className="capitalize">{s.query_type === "people" ? "People" : "Companies"}</span>
-                      )}
-                    </td>
-                    <td className="table-td">
-                      {s.result_count}
-                      {s.total_available ? <span className="text-ink-400"> / {s.total_available}</span> : null}
-                    </td>
-                    <td className="table-td text-ink-500">{new Date(s.created_at).toLocaleString()}</td>
-                    <td className="table-td">
-                      <div className="flex items-center justify-end gap-1">
-                        <Link to={`/research/${s.id}`} className="btn-ghost px-2 py-1 text-sm">
-                          View
-                        </Link>
-                        <button className="btn-ghost px-2 py-1 text-sm" onClick={() => exportSearch(s, "csv")}>
-                          <Icon.Download width={15} height={15} /> CSV
-                        </button>
-                        <button className="btn-ghost px-2 py-1 text-sm" onClick={() => exportSearch(s, "xlsx")}>
-                          <Icon.Download width={15} height={15} /> Excel
-                        </button>
-                        <button className="btn-ghost px-2 py-1 text-red-500" onClick={() => remove(s)}>
-                          <Icon.Trash width={15} height={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                {researchTree.map((node) => (
+                  <ResearchSearchRows
+                    key={node.search.id}
+                    node={node}
+                    depth={0}
+                    exportSearch={exportSearch}
+                    remove={remove}
+                  />
                 ))}
               </tbody>
             </table>
