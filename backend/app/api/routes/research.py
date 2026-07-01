@@ -31,6 +31,7 @@ from app.services.research_dataset import (
     create_manual_dataset as create_manual_dataset_record,
     delete_dataset_result,
     import_companies_to_dataset,
+    update_company_in_dataset,
 )
 from app.services.settings_service import build_client, get_or_create_settings, is_configured
 
@@ -124,6 +125,41 @@ def add_company_to_search(
         result = add_company_to_dataset(
             db,
             search,
+            name=payload.name,
+            domain=payload.domain,
+            website=payload.website,
+            industry=payload.industry,
+            country=payload.country,
+            city=payload.city,
+            phone=payload.phone,
+            linkedin_url=payload.linkedin_url,
+            employee_count=payload.employee_count,
+            revenue=payload.revenue,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
+@router.patch("/searches/{search_id}/results/{result_id}", response_model=ResearchResultDetail)
+def update_company_in_search(
+    search_id: int,
+    result_id: int,
+    payload: ResearchCompanyAdd,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    result = db.get(ResearchResult, result_id)
+    if not result or result.search_id != search_id:
+        raise HTTPException(status_code=404, detail="Research result not found.")
+    try:
+        result = update_company_in_dataset(
+            db,
+            search,
+            result,
             name=payload.name,
             domain=payload.domain,
             website=payload.website,

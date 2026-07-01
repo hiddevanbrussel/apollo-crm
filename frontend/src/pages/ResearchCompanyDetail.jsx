@@ -50,6 +50,18 @@ export default function ResearchCompanyDetail() {
   const [contactFilters, setContactFilters] = useState(() => emptyFilters(PEOPLE_CONTACT_FIELDS));
   const [runningContacts, setRunningContacts] = useState(false);
 
+  const [showEditCompany, setShowEditCompany] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    name: "",
+    domain: "",
+    country: "",
+    industry: "",
+    city: "",
+    website: "",
+    linkedin_url: "",
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const { data } = await api.get(`/research/searches/${searchId}/results/${resultId}`);
@@ -107,6 +119,47 @@ export default function ResearchCompanyDetail() {
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
   }, []);
+
+  const openEditCompany = () => {
+    const fields = company?.fields || {};
+    setCompanyForm({
+      name: fields.name || company?.name || "",
+      domain: fields.domain || "",
+      country: fields.country || "",
+      industry: fields.industry || "",
+      city: fields.city || "",
+      website: fields.website || "",
+      linkedin_url: fields.linkedin_url || "",
+    });
+    setShowEditCompany(true);
+  };
+
+  const saveCompany = async (e) => {
+    e?.preventDefault();
+    if (!companyForm.name.trim()) {
+      toast.info("Company name is required.");
+      return;
+    }
+    setSavingCompany(true);
+    try {
+      await api.patch(`/research/searches/${searchId}/results/${resultId}`, {
+        name: companyForm.name.trim(),
+        domain: companyForm.domain || null,
+        website: companyForm.website || null,
+        industry: companyForm.industry || null,
+        country: companyForm.country || null,
+        city: companyForm.city || null,
+        linkedin_url: companyForm.linkedin_url || null,
+      });
+      toast.success("Company updated.");
+      setShowEditCompany(false);
+      await load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingCompany(false);
+    }
+  };
 
   const enrich = async () => {
     if (!confirm("Fetch complete company profile from Apollo? This may consume credits.")) return;
@@ -190,6 +243,11 @@ export default function ResearchCompanyDetail() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {company.editable && (
+            <button className="btn-secondary" onClick={openEditCompany}>
+              <Icon.Edit width={18} height={18} /> Edit
+            </button>
+          )}
           <button
             className="btn-secondary"
             onClick={openContactsModal}
@@ -511,6 +569,78 @@ export default function ResearchCompanyDetail() {
             values={contactFilters}
             onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
           />
+        </form>
+      </Modal>
+
+      <Modal
+        open={showEditCompany}
+        onClose={() => !savingCompany && setShowEditCompany(false)}
+        title="Edit company"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowEditCompany(false)} disabled={savingCompany}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={saveCompany} disabled={savingCompany}>
+              {savingCompany && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={saveCompany} className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <Field label="Company name *">
+              <input
+                className="input"
+                required
+                value={companyForm.name}
+                onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Domain">
+            <input
+              className="input"
+              placeholder="example.com"
+              value={companyForm.domain}
+              onChange={(e) => setCompanyForm({ ...companyForm, domain: e.target.value })}
+            />
+          </Field>
+          <Field label="Website">
+            <input
+              className="input"
+              value={companyForm.website}
+              onChange={(e) => setCompanyForm({ ...companyForm, website: e.target.value })}
+            />
+          </Field>
+          <Field label="Country">
+            <input
+              className="input"
+              value={companyForm.country}
+              onChange={(e) => setCompanyForm({ ...companyForm, country: e.target.value })}
+            />
+          </Field>
+          <Field label="City">
+            <input
+              className="input"
+              value={companyForm.city}
+              onChange={(e) => setCompanyForm({ ...companyForm, city: e.target.value })}
+            />
+          </Field>
+          <Field label="Industry">
+            <input
+              className="input"
+              value={companyForm.industry}
+              onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })}
+            />
+          </Field>
+          <Field label="LinkedIn">
+            <input
+              className="input"
+              value={companyForm.linkedin_url}
+              onChange={(e) => setCompanyForm({ ...companyForm, linkedin_url: e.target.value })}
+            />
+          </Field>
         </form>
       </Modal>
     </div>

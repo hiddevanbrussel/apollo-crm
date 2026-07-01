@@ -95,7 +95,8 @@ export default function ResearchDetail() {
   const [enrichingId, setEnrichingId] = useState(null);
 
   const [showAddCompany, setShowAddCompany] = useState(false);
-  const [companyForm, setCompanyForm] = useState({
+  const [editingCompanyId, setEditingCompanyId] = useState(null);
+  const emptyCompanyForm = () => ({
     name: "",
     domain: "",
     country: "",
@@ -104,6 +105,7 @@ export default function ResearchDetail() {
     website: "",
     linkedin_url: "",
   });
+  const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
   const [savingCompany, setSavingCompany] = useState(false);
   const [importing, setImporting] = useState(false);
   const [childSearches, setChildSearches] = useState([]);
@@ -305,7 +307,34 @@ export default function ResearchDetail() {
     }
   };
 
-  const addCompany = async (e) => {
+  const openAddCompany = () => {
+    setEditingCompanyId(null);
+    setCompanyForm(emptyCompanyForm());
+    setShowAddCompany(true);
+  };
+
+  const openEditCompany = (row) => {
+    setEditingCompanyId(row.id);
+    setCompanyForm({
+      name: row.name || "",
+      domain: row.domain || "",
+      country: row.country || "",
+      industry: row.industry || "",
+      city: row.city || "",
+      website: row.website || "",
+      linkedin_url: row.linkedin_url || "",
+    });
+    setShowAddCompany(true);
+  };
+
+  const closeCompanyModal = () => {
+    if (savingCompany) return;
+    setShowAddCompany(false);
+    setEditingCompanyId(null);
+    setCompanyForm(emptyCompanyForm());
+  };
+
+  const saveCompany = async (e) => {
     e?.preventDefault();
     if (!companyForm.name.trim()) {
       toast.info("Company name is required.");
@@ -313,7 +342,7 @@ export default function ResearchDetail() {
     }
     setSavingCompany(true);
     try {
-      await api.post(`/research/searches/${id}/results`, {
+      const payload = {
         name: companyForm.name.trim(),
         domain: companyForm.domain || null,
         website: companyForm.website || null,
@@ -321,11 +350,18 @@ export default function ResearchDetail() {
         country: companyForm.country || null,
         city: companyForm.city || null,
         linkedin_url: companyForm.linkedin_url || null,
-      });
-      toast.success("Company added.");
+      };
+      if (editingCompanyId) {
+        await api.patch(`/research/searches/${id}/results/${editingCompanyId}`, payload);
+        toast.success("Company updated.");
+      } else {
+        await api.post(`/research/searches/${id}/results`, payload);
+        toast.success("Company added.");
+        setPage(1);
+      }
       setShowAddCompany(false);
-      setCompanyForm({ name: "", domain: "", country: "", industry: "", city: "", website: "", linkedin_url: "" });
-      setPage(1);
+      setEditingCompanyId(null);
+      setCompanyForm(emptyCompanyForm());
       load();
     } catch (err) {
       toast.error(apiError(err));
@@ -416,7 +452,7 @@ export default function ResearchDetail() {
         <div className="flex flex-wrap items-center gap-2">
           {isManualDataset && (
             <>
-              <button className="btn-secondary" onClick={() => setShowAddCompany(true)}>
+              <button className="btn-secondary" onClick={openAddCompany}>
                 <Icon.Plus width={18} height={18} /> Add company
               </button>
               <label className={`btn-secondary cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>
@@ -489,7 +525,7 @@ export default function ResearchDetail() {
             action={
               isManualDataset ? (
                 <div className="flex flex-wrap justify-center gap-2">
-                  <button className="btn-primary" onClick={() => setShowAddCompany(true)}>
+                  <button className="btn-primary" onClick={openAddCompany}>
                     <Icon.Plus width={18} height={18} /> Add company
                   </button>
                 </div>
@@ -554,6 +590,15 @@ export default function ResearchDetail() {
                               ) : (
                                 <Icon.Bolt width={15} height={15} />
                               )}
+                            </button>
+                          )}
+                          {isManualDataset && (
+                            <button
+                              className="btn-ghost px-2 py-1 text-sm"
+                              onClick={() => openEditCompany(row)}
+                              title="Edit company"
+                            >
+                              <Icon.Edit width={15} height={15} />
                             </button>
                           )}
                           {isManualDataset && (
@@ -673,20 +718,20 @@ export default function ResearchDetail() {
 
       <Modal
         open={showAddCompany}
-        onClose={() => !savingCompany && setShowAddCompany(false)}
-        title="Add company"
+        onClose={closeCompanyModal}
+        title={editingCompanyId ? "Edit company" : "Add company"}
         footer={
           <>
-            <button className="btn-secondary" onClick={() => setShowAddCompany(false)} disabled={savingCompany}>
+            <button className="btn-secondary" onClick={closeCompanyModal} disabled={savingCompany}>
               Cancel
             </button>
-            <button className="btn-primary" onClick={addCompany} disabled={savingCompany}>
+            <button className="btn-primary" onClick={saveCompany} disabled={savingCompany}>
               {savingCompany && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
             </button>
           </>
         }
       >
-        <form onSubmit={addCompany} className="grid grid-cols-2 gap-4">
+        <form onSubmit={saveCompany} className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <Field label="Company name *">
               <input

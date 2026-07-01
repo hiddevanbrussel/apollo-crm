@@ -16,7 +16,7 @@ from app.services.import_service import (
     normalize_domain,
     parse_spreadsheet,
 )
-from app.services.research_service import display_name
+from app.services.research_service import display_name, is_enriched
 
 DATASET_SOURCE_MANUAL = "manual"
 DATASET_SOURCE_APOLLO = "apollo"
@@ -149,6 +149,68 @@ def add_company_to_dataset(
     )
     db.add(result)
     sync_result_count(db, search)
+    db.commit()
+    db.refresh(result)
+    return result
+
+
+def update_company_in_dataset(
+    db: Session,
+    search: ResearchSearch,
+    result: ResearchResult,
+    *,
+    name: str,
+    domain: str | None = None,
+    website: str | None = None,
+    industry: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    phone: str | None = None,
+    linkedin_url: str | None = None,
+    employee_count: int | None = None,
+    revenue: int | None = None,
+) -> ResearchResult:
+    _require_manual_company_dataset(search)
+    if result.search_id != search.id:
+        raise ApolloError("Result does not belong to this dataset.", status_code=404)
+    if result.entity_type != "company":
+        raise ApolloError("Only company records can be edited.", status_code=400)
+
+    name = name.strip()
+    if not name:
+        raise ApolloError("Company name is required.", status_code=400)
+
+    existing = dict(result.raw_data or {})
+    extra = existing.get("_extra")
+    patches = manual_org_raw_data(
+        name=name,
+        domain=domain,
+        website=website,
+        industry=industry,
+        country=normalize_country(country),
+        city=city,
+        phone=phone,
+        linkedin_url=linkedin_url,
+        employee_count=employee_count,
+        revenue=revenue,
+    )
+
+    if is_enriched(existing):
+        raw = existing
+        for key, value in patches.items():
+            if key == "_research_source":
+                continue
+            raw[key] = value
+    else:
+        raw = patches
+
+    if extra:
+        raw["_extra"] = extra
+
+    result.raw_data = raw
+    result.name = display_name("organizations", raw) or name
+    if not is_enriched(raw):
+        result.apollo_id = None
     db.commit()
     db.refresh(result)
     return result

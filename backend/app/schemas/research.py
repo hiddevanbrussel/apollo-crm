@@ -90,6 +90,7 @@ class ResearchResultDetail(BaseModel):
     search_id: int
     search_name: str
     query_type: str
+    editable: bool = False
     enriched: bool = False
     apollo_id: str | None = None
     name: str | None = None

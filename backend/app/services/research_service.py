@@ -245,11 +245,14 @@ def domain_from_result(result: ResearchResult) -> str | None:
 
 
 def result_detail(result: ResearchResult, search: ResearchSearch) -> dict[str, Any]:
+    criteria = search.criteria or {}
     return {
         "id": result.id,
         "search_id": search.id,
         "search_name": search.name,
         "query_type": search.query_type,
+        "editable": search.query_type == "organizations"
+        and criteria.get("_dataset_source") == "manual",
         "enriched": bool((result.raw_data or {}).get("_research_enriched")),
         "apollo_id": result.apollo_id or (result.raw_data or {}).get("id"),
         "name": result.name,
