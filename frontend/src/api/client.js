@@ -9,14 +9,34 @@ const api = axios.create({ baseURL });
 const TOKEN_KEY = "apollo_crm_token";
 
 let authBootstrapping = true;
+let authBootstrapDone = false;
+let authBootstrapWaiters = [];
 let authStateHandler = null;
+
+function resolveAuthBootstrapWaiters() {
+  authBootstrapWaiters.forEach((resolve) => resolve());
+  authBootstrapWaiters = [];
+}
 
 export function setAuthBootstrapping(value) {
   authBootstrapping = value;
+  if (!value) {
+    authBootstrapDone = true;
+    resolveAuthBootstrapWaiters();
+  }
 }
 
 export function setAuthStateHandler(handler) {
   authStateHandler = handler;
+}
+
+function waitForAuthBootstrap() {
+  if (authBootstrapDone || !authBootstrapping) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    authBootstrapWaiters.push(resolve);
+  });
 }
 
 function normalizeToken(token) {
@@ -47,11 +67,39 @@ function isAuthMeRequest(url = "") {
   return url.includes("/auth/me");
 }
 
+function isPublicRequest(url = "") {
+  return (
+    url.includes("/auth/login") ||
+    url.includes("/auth/azure/config") ||
+    url.includes("/health")
+  );
+}
+
 function isAuthBootstrapRequest(url = "") {
   return isAuthMeRequest(url) || url.includes("/auth/azure/config");
 }
 
-api.interceptors.request.use((config) => {
+function responseDetail(data) {
+  if (data == null) return null;
+  if (typeof data === "string") {
+    const trimmed = data.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed?.detail != null) return parsed.detail;
+      } catch {
+        // fall through
+      }
+    }
+    return trimmed || null;
+  }
+  return data.detail ?? null;
+}
+
+api.interceptors.request.use(async (config) => {
+  if (!isPublicRequest(config.url || "")) {
+    await waitForAuthBootstrap();
+  }
   const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -68,12 +116,13 @@ api.interceptors.response.use(
     if (status === 401 && !url.includes("/auth/login")) {
       error.isAuthError = true;
 
-      // Bootstrap auth failures are handled in AuthContext (avoid clearing a fresh token).
-      if (!isAuthBootstrapRequest(url)) {
+      // During bootstrap only AuthContext handles /auth/me; never clear the token yet.
+      if (!authBootstrapping && !isAuthBootstrapRequest(url)) {
         setToken(null);
         authStateHandler?.({ type: "unauthorized" });
 
-        if (!authBootstrapping && window.location.pathname !== "/login") {
+        const path = window.location.pathname;
+        if (path !== "/login" && !path.startsWith("/login/")) {
           window.location.replace("/login");
         }
       }
@@ -87,7 +136,7 @@ export function apiError(error, fallback = "Something went wrong.") {
   if (isUnauthorized(error)) {
     return null;
   }
-  const detail = error?.response?.data?.detail;
+  const detail = responseDetail(error?.response?.data);
   if (Array.isArray(detail)) {
     return detail.map((d) => d.msg || JSON.stringify(d)).join(", ");
   }
@@ -95,6 +144,14 @@ export function apiError(error, fallback = "Something went wrong.") {
     return JSON.stringify(detail);
   }
   return detail || error?.message || fallback;
+}
+
+/** Show a toast for an API error; silently ignores auth/session errors. */
+export function notifyApiError(toast, error, fallback = "Something went wrong.") {
+  const message = apiError(error, fallback);
+  if (message) {
+    toast.error(message);
+  }
 }
 
 export default api;

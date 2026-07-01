@@ -12,7 +12,7 @@ class Company(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    domain: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     website: Mapped[str | None] = mapped_column(String(255), nullable=True)
     linkedin_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

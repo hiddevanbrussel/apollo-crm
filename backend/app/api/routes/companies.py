@@ -107,7 +107,7 @@ def _ensure_groq_enabled(db: Session) -> None:
 
 
 def _apply_found_domain(db: Session, company: Company, domain: str | None) -> bool:
-    """Set a found domain on a company if it's free. Returns True if applied."""
+    """Set a found domain on a company. Returns True if applied."""
     if not domain:
         return False
     added, _ = add_domain(db, company, domain)
@@ -319,15 +319,6 @@ def export_companies(
 
 @router.post("", response_model=CompanyOut, status_code=status.HTTP_201_CREATED)
 def create_company(payload: CompanyCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    if payload.domain:
-        existing = db.execute(
-            select(Company).where(func.lower(Company.domain) == payload.domain.lower())
-        ).scalar_one_or_none()
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"A company with domain '{payload.domain}' already exists.",
-            )
     company = Company(**payload.model_dump())
     if company.country:
         company.country = normalize_country(company.country)
@@ -437,7 +428,8 @@ async def import_companies(
 
     Recognized columns: ``customer_name`` (required), ``country`` and ``domain``.
     Every other column is preserved in ``extra_data``. Existing companies (matched
-    by name or domain) are updated rather than duplicated. When ``enrich`` is true
+    by name) are updated rather than duplicated. Multiple companies may share the same
+    domain. When ``enrich`` is true
     and Apollo is enabled, each company with a domain is enriched via Apollo
     (filling industry, employee_count and revenue) — this consumes credits.
     """
@@ -475,7 +467,6 @@ async def import_companies(
     recognized: set[str] = set()
     extra_cols: set[str] = set()
     seen_in_file: set[str] = set()
-    seen_domains_in_file: set[str] = set()
 
     for index, row in enumerate(rows, start=2):  # row 1 is the header
         for header in row:
@@ -487,44 +478,23 @@ async def import_companies(
             errors.append(f"Rij {index}: 'customer_name' is leeg, overgeslagen.")
             continue
 
-        if domain:
-            if domain in seen_domains_in_file:
-                extra.setdefault("import_domain", domain)
-                domain = None
-            else:
-                clash = db.execute(
-                    select(Company).where(func.lower(Company.domain) == domain)
-                ).scalar_one_or_none()
-                if clash and clash.name.lower() != name.lower():
-                    extra.setdefault("import_domain", domain)
-                    domain = None
-                else:
-                    seen_domains_in_file.add(domain)
-
         dedup_key = f"{name.lower()}|{domain or ''}"
         if dedup_key in seen_in_file:
             skipped += 1
             continue
         seen_in_file.add(dedup_key)
 
-        # Match an existing company by name first, then by domain.
+        # Match an existing company by name (domains may be shared across companies).
         existing = db.execute(
             select(Company).where(func.lower(Company.name) == name.lower())
         ).scalar_one_or_none()
-        if not existing and domain:
-            existing = db.execute(
-                select(Company).where(func.lower(Company.domain) == domain)
-            ).scalar_one_or_none()
 
         if existing:
             changed = False
             if domain:
-                added, clash_msg = add_domain(db, existing, domain)
+                added, _clash_msg = add_domain(db, existing, domain)
                 if added:
                     changed = True
-                    seen_domains_in_file.add(domain)
-                elif clash_msg:
-                    extra.setdefault("import_domain", domain)
             if _apply_import_fields(existing, import_fields):
                 changed = True
             if extra:
@@ -554,8 +524,6 @@ async def import_companies(
             db.add(company)
             created += 1
             created_names.append(name)
-            if domain:
-                seen_domains_in_file.add(domain)
 
         if enrich and company.domain:
             db.flush()  # ensure company.id for logging
@@ -634,15 +602,8 @@ def update_company(
         data["country"] = normalize_country(data["country"])
     if data.get("industry"):
         data["industry"] = normalize_industry(data["industry"])
-    if "domain" in data and data["domain"] and data["domain"].lower() != (company.domain or "").lower():
-        clash = db.execute(
-            select(Company).where(func.lower(Company.domain) == data["domain"].lower())
-        ).scalar_one_or_none()
-        if clash and clash.id != company.id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Another company already uses domain '{data['domain']}'.",
-            )
+    if "domain" in data and data["domain"]:
+        data["domain"] = normalize_domain(data["domain"])
     for key, value in data.items():
         setattr(company, key, value)
     db.commit()
@@ -751,13 +712,6 @@ def enrich_company(company_id: int, db: Session = Depends(get_db), _: User = Dep
         if key in {"source"}:
             continue
         if value not in (None, "") and hasattr(company, key):
-            # Don't overwrite domain uniqueness with a clashing value.
-            if key == "domain" and value and value.lower() != (company.domain or "").lower():
-                clash = db.execute(
-                    select(Company).where(func.lower(Company.domain) == value.lower())
-                ).scalar_one_or_none()
-                if clash and clash.id != company.id:
-                    continue
             setattr(company, key, value)
     company.enrichment_status = "enriched"
     db.add(

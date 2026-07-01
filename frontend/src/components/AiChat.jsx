@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import api, { apiError } from "../api/client";
+import api, { apiError, notifyApiError } from "../api/client";
 import { Icon } from "./icons";
 import { Spinner } from "./ui";
 import { useToast } from "../context/ToastContext";
@@ -170,9 +170,11 @@ export default function AiChat() {
         },
       ]);
     } catch (err) {
-      const message = apiError(err);
-      toast.error(message);
-      setMessages((prev) => [...prev, { role: "assistant", content: `Sorry — ${message}` }]);
+      const message = apiError(err, "Something went wrong.");
+      if (message) {
+        notifyApiError(toast, err);
+        setMessages((prev) => [...prev, { role: "assistant", content: `Sorry — ${message}` }]);
+      }
     } finally {
       setLoading(false);
     }

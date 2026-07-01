@@ -253,8 +253,6 @@ def _upsert_company_from_org(db: Session, org: dict) -> Company | None:
     valid = {k: v for k, v in fields.items() if hasattr(Company, k) and v not in (None, "")}
     if company:
         for key, value in valid.items():
-            if key == "domain" and value and value.lower() != (company.domain or "").lower():
-                continue  # avoid unique clashes
             setattr(company, key, value)
     else:
         company = Company(**valid)

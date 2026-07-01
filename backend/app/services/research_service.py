@@ -14,10 +14,11 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Company, Contact, ResearchResult, ResearchSearch, SearchHistory
+from app.models import Contact, ResearchResult, ResearchSearch, SearchHistory
 from app.services.apollo_filters import normalize_search_payload
 from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError, ApolloService
+from app.services.company_domains import find_by_domain
 
 logger = logging.getLogger("research.service")
 
@@ -586,20 +587,6 @@ def _company_results_for_domain(
     return verified
 
 
-def _crm_company_for_domain(db: Session, domain: str) -> Company | None:
-    domain = domain.strip().lower()
-    if not domain:
-        return None
-    return db.execute(
-        select(Company).where(
-            or_(
-                func.lower(Company.domain) == domain,
-                Company.domains.contains([domain]),
-            )
-        )
-    ).scalar_one_or_none()
-
-
 def list_related_companies_for_result(
     db: Session,
     *,
@@ -638,8 +625,7 @@ def list_related_companies_for_result(
         )
 
     if domain:
-        crm = _crm_company_for_domain(db, domain)
-        if crm:
+        for crm in find_by_domain(db, domain):
             crm_apollo = (crm.apollo_id or "").strip() or None
             items.append(
                 {
@@ -747,13 +733,11 @@ def list_contacts_for_company_result(
                 }
             )
 
-    company = _crm_company_for_domain(db, domain)
-
-    if company:
+    for crm_company in find_by_domain(db, domain):
         crm_contacts = (
             db.execute(
                 select(Contact)
-                .where(Contact.company_id == company.id)
+                .where(Contact.company_id == crm_company.id)
                 .order_by(Contact.full_name, Contact.id)
             )
             .scalars()
@@ -786,7 +770,7 @@ def list_contacts_for_company_result(
                     "contact_source": contact.source,
                     "research_search_id": None,
                     "research_search_name": None,
-                    "company_id": company.id,
+                    "company_id": crm_company.id,
                 }
             )
 

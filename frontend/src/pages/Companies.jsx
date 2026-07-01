@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import api, { apiError } from "../api/client";
+import api, { notifyApiError } from "../api/client";
 import { Icon } from "../components/icons";
 import { CompanyLogo, EmptyState, Field, Modal, Pagination, PageLoader, SourceBadge, Spinner, StatusBadge } from "../components/ui";
 import { FilterSearchSelect } from "../components/FilterSearch";
@@ -62,7 +62,7 @@ function FilterSection({ title, icon: IconCmp, active, defaultOpen = false, chil
 
 export default function Companies() {
   const toast = useToast();
-  const { isAdmin } = useAuth();
+  const { user, loading: authLoading, isAdmin } = useAuth();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +87,7 @@ export default function Companies() {
   const pageSize = 20;
 
   useEffect(() => {
+    if (authLoading || !user) return;
     api
       .get("/companies/filter-options")
       .then((res) => setFilterOptions(res.data))
@@ -99,9 +100,10 @@ export default function Companies() {
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
-  }, []);
+  }, [authLoading, user]);
 
   const load = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
     try {
       const { data } = await api.get("/companies", {
@@ -113,15 +115,16 @@ export default function Companies() {
       });
       setData(data);
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setLoading(false);
     }
-  }, [search, filters, page, toast]);
+  }, [search, filters, page, toast, user]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     load();
-  }, [load]);
+  }, [load, authLoading, user]);
 
   const onSearchSubmit = (e) => {
     e.preventDefault();
@@ -147,7 +150,7 @@ export default function Companies() {
       const { data } = await api.get("/companies/saved-filters");
       setSavedFilters(data.items || []);
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     }
   };
 
@@ -184,7 +187,7 @@ export default function Companies() {
       setSaveFilterName("");
       await loadSavedFilters();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setSavingFilter(false);
     }
@@ -197,7 +200,7 @@ export default function Companies() {
       setSavedFilters((prev) => prev.filter((f) => f.id !== id));
       toast.success("Saved filter deleted.");
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     }
   };
 
@@ -216,7 +219,7 @@ export default function Companies() {
       URL.revokeObjectURL(url);
       toast.success(`Exported as ${format.toUpperCase()}.`);
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setExporting(null);
     }
@@ -255,7 +258,7 @@ export default function Companies() {
       clearSelection();
       load();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setBulkEnriching(false);
     }
@@ -273,7 +276,7 @@ export default function Companies() {
       setPage(1);
       load();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setBulkDeleting(false);
     }
@@ -295,7 +298,7 @@ export default function Companies() {
       setPage(1);
       load();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setDeletingAll(false);
     }
@@ -315,7 +318,7 @@ export default function Companies() {
       setPage(1);
       load();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     } finally {
       setSaving(false);
     }
@@ -328,7 +331,7 @@ export default function Companies() {
       toast.success("Company deleted.");
       load();
     } catch (err) {
-      toast.error(apiError(err));
+      notifyApiError(toast, err);
     }
   };
 

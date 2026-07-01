@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Company
@@ -28,33 +27,35 @@ def list_domains(company: Company) -> list[str]:
     return result
 
 
-def _company_owns_domain(company: Company, normalized: str) -> bool:
-    return normalized in list_domains(company)
+def find_by_domain(db: Session, domain: str) -> list[Company]:
+    """All companies that use a domain (primary or extra)."""
+    normalized = normalize_domain(domain)
+    if not normalized:
+        return []
+    return (
+        db.execute(
+            select(Company)
+            .where(
+                or_(
+                    func.lower(Company.domain) == normalized,
+                    Company.domains.contains([normalized]),
+                )
+            )
+            .order_by(Company.id)
+        )
+        .scalars()
+        .all()
+    )
 
 
 def find_owner(db: Session, domain: str, *, exclude_id: int | None = None) -> Company | None:
-    normalized = normalize_domain(domain)
-    if not normalized:
-        return None
-
-    # Include unflushed changes in this session (e.g. during bulk contact import).
-    for obj in db:
-        if not isinstance(obj, Company):
+    """First company matching a domain (legacy helper when only one match is needed)."""
+    companies = find_by_domain(db, domain)
+    for company in companies:
+        if exclude_id is not None and company.id == exclude_id:
             continue
-        if exclude_id is not None and obj.id == exclude_id:
-            continue
-        if _company_owns_domain(obj, normalized):
-            return obj
-
-    stmt = select(Company).where(
-        or_(
-            func.lower(Company.domain) == normalized,
-            Company.domains.contains([normalized]),
-        )
-    )
-    if exclude_id is not None:
-        stmt = stmt.where(Company.id != exclude_id)
-    return db.execute(stmt).scalar_one_or_none()
+        return company
+    return None
 
 
 def add_domain(
@@ -72,20 +73,8 @@ def add_domain(
     if domain in list_domains(company):
         return False, None
 
-    owner = find_owner(db, domain, exclude_id=company.id)
-    if owner:
-        return False, f"Domain '{domain}' is already used by '{owner.name}'."
-
     if not company.domain and set_primary_if_empty:
         company.domain = domain
-        try:
-            with db.begin_nested():
-                db.flush()
-        except IntegrityError:
-            company.domain = None
-            owner = find_owner(db, domain, exclude_id=company.id)
-            name = owner.name if owner else "another company"
-            return False, f"Domain '{domain}' is already used by '{name}'."
         return True, None
 
     extras = [d for d in (company.domains or []) if d]
