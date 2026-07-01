@@ -602,8 +602,12 @@ def _person_belongs_to_company(
 
     criteria = people_search.criteria or {}
     source_result_id = criteria.get("_source_company_result_id")
-    if source_result_id is not None and int(source_result_id) == company_result_id:
-        return True
+    if source_result_id is not None:
+        try:
+            if int(source_result_id) == company_result_id:
+                return True
+        except (TypeError, ValueError):
+            pass
 
     return False
 
@@ -784,6 +788,7 @@ def list_contacts_for_company_result(
                 continue
 
             fields = _flatten_person(person_raw)
+            apollo_id = result.apollo_id or fields.get("apollo_id")
             name = fields.get("name") or result.name
             email = fields.get("email")
             key = _dedupe_key(apollo_id=apollo_id, email=email, name=name)

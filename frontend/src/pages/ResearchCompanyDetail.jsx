@@ -52,17 +52,30 @@ export default function ResearchCompanyDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [{ data }, contactsRes, relatedRes] = await Promise.all([
-        api.get(`/research/searches/${searchId}/results/${resultId}`),
-        api.get(`/research/searches/${searchId}/results/${resultId}/contacts`),
-        api.get(`/research/searches/${searchId}/results/${resultId}/related`),
-      ]);
+      const { data } = await api.get(`/research/searches/${searchId}/results/${resultId}`);
       setCompany(data);
-      setContacts(contactsRes.data.items || []);
-      setRelated(relatedRes.data.items || []);
     } catch (err) {
       toast.error(apiError(err));
       navigate(`/research/${searchId}`);
+      return;
+    }
+
+    const [contactsRes, relatedRes] = await Promise.allSettled([
+      api.get(`/research/searches/${searchId}/results/${resultId}/contacts`),
+      api.get(`/research/searches/${searchId}/results/${resultId}/related`),
+    ]);
+
+    if (contactsRes.status === "fulfilled") {
+      setContacts(contactsRes.value.data.items || []);
+    } else {
+      setContacts([]);
+      toast.error(apiError(contactsRes.reason));
+    }
+
+    if (relatedRes.status === "fulfilled") {
+      setRelated(relatedRes.value.data.items || []);
+    } else {
+      setRelated([]);
     }
   }, [searchId, resultId, navigate, toast]);
 
@@ -114,7 +127,7 @@ export default function ResearchCompanyDetail() {
       toast.info("This company has no domain to search contacts for.");
       return;
     }
-    setContactName(`${company.fields.name || company.name || "Company"} — contacts`);
+    setContactName("");
     setContactFilters(emptyFilters(PEOPLE_CONTACT_FIELDS));
     setShowContacts(true);
   };
@@ -144,11 +157,8 @@ export default function ResearchCompanyDetail() {
         `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}.`
       );
       setShowContacts(false);
-      await loadContacts();
+      await load();
       setTab("contacts");
-      toast.success(
-        `Captured ${created.result_count} contacts${created.total_available ? ` (of ${created.total_available} available)` : ""}. View them in the Contacts tab, or open the full research dataset.`,
-      );
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -465,18 +475,21 @@ export default function ResearchCompanyDetail() {
         <form onSubmit={runContactSearch} className="space-y-4">
           <div className="rounded-lg border border-brand-100 bg-brand-50/50 px-4 py-3 text-sm text-ink-600">
             Searches contacts only at <strong>{fields.domain}</strong>. Add filters to narrow by title, seniority,
-            location, and more. Results are saved as a new people research dataset.
+            location, and more. Results are saved as a new contact recordset linked to this company.
           </div>
 
-          <ApolloFilterForm
-            fields={PEOPLE_CONTACT_FIELDS}
-            values={contactFilters}
-            onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
-          />
-
-          <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
-            <Field label="Research name *">
-              <input className="input" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field
+              label="Contact recordset name *"
+              hint="This name appears in your saved research list under the parent recordset."
+            >
+              <input
+                className="input"
+                required
+                placeholder="e.g. Sales leaders at Acme"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+              />
             </Field>
             <Field label="Max records">
               <select
@@ -492,6 +505,12 @@ export default function ResearchCompanyDetail() {
               </select>
             </Field>
           </div>
+
+          <ApolloFilterForm
+            fields={PEOPLE_CONTACT_FIELDS}
+            values={contactFilters}
+            onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
+          />
         </form>
       </Modal>
     </div>

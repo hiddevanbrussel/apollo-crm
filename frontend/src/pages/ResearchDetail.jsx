@@ -191,7 +191,7 @@ export default function ResearchDetail() {
         companyCount: data?.search?.result_count || domains.length,
         domainCount: domains.length,
       });
-      setContactName(`${data?.search?.name || "Research"} — contacts`);
+      setContactName("");
       setContactFilters(emptyFilters(PEOPLE_CONTACT_FIELDS));
       setShowContacts(true);
     } catch (err) {
@@ -635,15 +635,18 @@ export default function ResearchDetail() {
             location, and more.
           </div>
 
-          <ApolloFilterForm
-            fields={PEOPLE_CONTACT_FIELDS}
-            values={contactFilters}
-            onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
-          />
-
-          <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
-            <Field label="Research name *">
-              <input className="input" value={contactName} onChange={(e) => setContactName(e.target.value)} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field
+              label="Contact recordset name *"
+              hint="This name appears in your saved research list under this company recordset."
+            >
+              <input
+                className="input"
+                required
+                placeholder="e.g. Marketing directors Q3"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+              />
             </Field>
             <Field label="Max records">
               <select
@@ -659,6 +662,12 @@ export default function ResearchDetail() {
               </select>
             </Field>
           </div>
+
+          <ApolloFilterForm
+            fields={PEOPLE_CONTACT_FIELDS}
+            values={contactFilters}
+            onChange={(key, value) => setContactFilters((prev) => ({ ...prev, [key]: value }))}
+          />
         </form>
       </Modal>
 
