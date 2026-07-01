@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { EmptyState, Field, Spinner } from "../components/ui";
+import { EmptyState, Field, SlidePanel, Spinner } from "../components/ui";
 import {
   ORG_FILTER_FIELDS,
   PEOPLE_FILTER_FIELDS,
@@ -18,6 +18,7 @@ export default function MarketResearch() {
   const navigate = useNavigate();
   const location = useLocation();
   const [status, setStatus] = useState(null);
+  const [drawer, setDrawer] = useState(null);
   const [mode, setMode] = useState("organizations");
   const [name, setName] = useState("");
   const [maxRecords, setMaxRecords] = useState(500);
@@ -26,13 +27,13 @@ export default function MarketResearch() {
   const [running, setRunning] = useState(false);
   const [searches, setSearches] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
-  const [createMode, setCreateMode] = useState("apollo");
   const [datasetName, setDatasetName] = useState("");
   const [creatingDataset, setCreatingDataset] = useState(false);
 
   const disabled = !status?.enabled || !status?.configured;
   const activeFields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
   const activeFilters = mode === "organizations" ? orgFilters : peopleFilters;
+  const drawerBusy = running || creatingDataset;
 
   useEffect(() => {
     api.get("/apollo/status").then((res) => setStatus(res.data)).catch(() => setStatus(null));
@@ -51,6 +52,7 @@ export default function MarketResearch() {
         setOrgFilters((prev) => ({ ...prev, ...state.prefilled }));
       }
     }
+    setDrawer("apollo");
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate]);
 
@@ -64,6 +66,11 @@ export default function MarketResearch() {
     } finally {
       setLoadingList(false);
     }
+  };
+
+  const closeDrawer = () => {
+    if (drawerBusy) return;
+    setDrawer(null);
   };
 
   const setFilter = (key, value) => {
@@ -102,6 +109,7 @@ export default function MarketResearch() {
       setName("");
       setOrgFilters(emptyFilters(ORG_FILTER_FIELDS));
       setPeopleFilters(emptyFilters(PEOPLE_FILTER_FIELDS));
+      setDrawer(null);
       loadList();
       navigate(`/research/${data.id}`);
     } catch (err) {
@@ -122,6 +130,7 @@ export default function MarketResearch() {
       const { data } = await api.post("/research/datasets", { name: datasetName.trim() });
       toast.success("Empty company dataset created.");
       setDatasetName("");
+      setDrawer(null);
       loadList();
       navigate(`/research/${data.id}`);
     } catch (err) {
@@ -160,130 +169,23 @@ export default function MarketResearch() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold text-ink-900">Market Research</h1>
-        <p className="text-sm text-ink-500">
-          Search Apollo or build your own company list (manual entry / import), then enrich and find contacts.
-        </p>
-      </div>
-
-      <div className="flex items-start gap-2 rounded-lg border border-ink-200 bg-white px-4 py-3 text-sm text-ink-600">
-        <Icon.Sparkles width={18} height={18} className="mt-0.5 text-brand-500" />
-        <p>
-          Company search uses{" "}
-          <code className="rounded bg-ink-50 px-1 text-xs">/mixed_companies/search</code> and consumes credits.
-          People search uses{" "}
-          <code className="rounded bg-ink-50 px-1 text-xs">/mixed_people/api_search</code> (no credits). Saved data
-          stays separate from your CRM.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={createMode === "apollo" ? "btn-primary" : "btn-secondary"}
-          onClick={() => setCreateMode("apollo")}
-        >
-          <Icon.Search width={18} height={18} /> Apollo search
-        </button>
-        <button
-          type="button"
-          className={createMode === "dataset" ? "btn-primary" : "btn-secondary"}
-          onClick={() => setCreateMode("dataset")}
-        >
-          <Icon.Plus width={18} height={18} /> Own company list
-        </button>
-      </div>
-
-      {createMode === "dataset" ? (
-        <form onSubmit={createDataset} className="card p-5 space-y-4">
-          <p className="text-sm text-ink-600">
-            Create an empty company dataset. Add companies manually or import a CSV/Excel file (column{" "}
-            <code className="rounded bg-ink-50 px-1 text-xs">customer_name</code> required, optional{" "}
-            <code className="rounded bg-ink-50 px-1 text-xs">domain</code>, <code className="rounded bg-ink-50 px-1 text-xs">country</code>).
-            Then enrich via Apollo and search contacts with filters — same as Apollo research.
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-ink-900">Market Research</h1>
+          <p className="text-sm text-ink-500">
+            Saved recordsets from Apollo searches or your own company lists. Enrich and find contacts from the detail
+            page.
           </p>
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="min-w-[220px] flex-1">
-              <Field label="Dataset name *">
-                <input
-                  className="input"
-                  placeholder="e.g. Target accounts Q3"
-                  value={datasetName}
-                  onChange={(e) => setDatasetName(e.target.value)}
-                />
-              </Field>
-            </div>
-            <button type="submit" className="btn-primary" disabled={creatingDataset}>
-              {creatingDataset ? (
-                <Spinner className="h-4 w-4 border-white/40 border-t-white" />
-              ) : (
-                <Icon.Plus width={18} height={18} />
-              )}
-              Create dataset
-            </button>
-          </div>
-        </form>
-      ) : (
-      <>
-      {disabled && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          The Apollo integration is {status?.configured ? "disabled" : "not configured"}. Go to{" "}
-          <a href="/settings" className="font-medium underline">
-            Settings
-          </a>{" "}
-          to enable it.
         </div>
-      )}
-
-      <form onSubmit={run} className="card p-5">
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className={mode === "organizations" ? "btn-primary" : "btn-secondary"}
-            onClick={() => setMode("organizations")}
-          >
-            <Icon.Building width={18} height={18} /> Companies
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-primary" onClick={() => setDrawer("apollo")}>
+            <Icon.Search width={18} height={18} /> Apollo search
           </button>
-          <button
-            type="button"
-            className={mode === "people" ? "btn-primary" : "btn-secondary"}
-            onClick={() => setMode("people")}
-          >
-            <Icon.Users width={18} height={18} /> People
+          <button type="button" className="btn-secondary" onClick={() => setDrawer("dataset")}>
+            <Icon.Plus width={18} height={18} /> Own company list
           </button>
         </div>
-
-        <ApolloFilterForm fields={activeFields} values={activeFilters} onChange={setFilter} />
-
-        <div className="mt-4 flex flex-wrap items-end gap-4 border-t border-ink-100 pt-4">
-          <div className="min-w-[220px] flex-1">
-            <Field label="Research name *">
-              <input
-                className="input"
-                placeholder="e.g. Dutch fintech VPs Q3"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </Field>
-          </div>
-          <Field label="Max records">
-            <select className="input w-auto" value={maxRecords} onChange={(e) => setMaxRecords(Number(e.target.value))}>
-              <option value={100}>100</option>
-              <option value={250}>250</option>
-              <option value={500}>500</option>
-              <option value={1000}>1,000</option>
-              <option value={2000}>2,000</option>
-            </select>
-          </Field>
-          <button type="submit" className="btn-primary" disabled={disabled || running}>
-            {running ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Search width={18} height={18} />}
-            Run & save
-          </button>
-        </div>
-      </form>
-      </>
-      )}
+      </div>
 
       <div className="card">
         <div className="border-b border-ink-100 px-5 py-4">
@@ -294,7 +196,20 @@ export default function MarketResearch() {
             <Spinner className="h-6 w-6" />
           </div>
         ) : searches.length === 0 ? (
-          <EmptyState title="No research yet" description="Run a search above to capture your first dataset." />
+          <EmptyState
+            title="No research yet"
+            description="Create your first recordset with Apollo search or your own company list."
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <button type="button" className="btn-primary" onClick={() => setDrawer("apollo")}>
+                  <Icon.Search width={18} height={18} /> Apollo search
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => setDrawer("dataset")}>
+                  <Icon.Plus width={18} height={18} /> Own company list
+                </button>
+              </div>
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -350,6 +265,119 @@ export default function MarketResearch() {
           </div>
         )}
       </div>
+
+      <SlidePanel
+        open={drawer === "apollo"}
+        onClose={closeDrawer}
+        title="New Apollo search"
+        wide
+        footer={
+          <>
+            <button className="btn-secondary" onClick={closeDrawer} disabled={drawerBusy}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={run} disabled={disabled || running}>
+              {running ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Search width={18} height={18} />}
+              Run & save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={run} className="space-y-4">
+          {disabled && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              The Apollo integration is {status?.configured ? "disabled" : "not configured"}. Go to{" "}
+              <a href="/settings" className="font-medium underline">
+                Settings
+              </a>{" "}
+              to enable it.
+            </div>
+          )}
+
+          <div className="rounded-lg border border-ink-200 bg-ink-50/50 px-4 py-3 text-sm text-ink-600">
+            <Icon.Sparkles width={16} height={16} className="mb-1 inline text-brand-500" /> Company search uses credits;
+            people search does not. Results stay separate from your CRM.
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={mode === "organizations" ? "btn-primary" : "btn-secondary"}
+              onClick={() => setMode("organizations")}
+            >
+              <Icon.Building width={18} height={18} /> Companies
+            </button>
+            <button
+              type="button"
+              className={mode === "people" ? "btn-primary" : "btn-secondary"}
+              onClick={() => setMode("people")}
+            >
+              <Icon.Users width={18} height={18} /> People
+            </button>
+          </div>
+
+          <ApolloFilterForm fields={activeFields} values={activeFilters} onChange={setFilter} />
+
+          <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
+            <Field label="Research name *">
+              <input
+                className="input"
+                placeholder="e.g. Dutch fintech VPs Q3"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+            <Field label="Max records">
+              <select className="input" value={maxRecords} onChange={(e) => setMaxRecords(Number(e.target.value))}>
+                <option value={100}>100</option>
+                <option value={250}>250</option>
+                <option value={500}>500</option>
+                <option value={1000}>1,000</option>
+                <option value={2000}>2,000</option>
+              </select>
+            </Field>
+          </div>
+        </form>
+      </SlidePanel>
+
+      <SlidePanel
+        open={drawer === "dataset"}
+        onClose={closeDrawer}
+        title="New company list"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={closeDrawer} disabled={drawerBusy}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={createDataset} disabled={creatingDataset}>
+              {creatingDataset ? (
+                <Spinner className="h-4 w-4 border-white/40 border-t-white" />
+              ) : (
+                <Icon.Plus width={18} height={18} />
+              )}
+              Create dataset
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={createDataset} className="space-y-4">
+          <p className="text-sm text-ink-600">
+            Create an empty company dataset. On the next page you can add companies manually or import a CSV/Excel file
+            (column <code className="rounded bg-ink-50 px-1 text-xs">customer_name</code> required, optional{" "}
+            <code className="rounded bg-ink-50 px-1 text-xs">domain</code>,{" "}
+            <code className="rounded bg-ink-50 px-1 text-xs">country</code>). Then enrich via Apollo and search
+            contacts with filters.
+          </p>
+          <Field label="Dataset name *">
+            <input
+              className="input"
+              placeholder="e.g. Target accounts Q3"
+              value={datasetName}
+              onChange={(e) => setDatasetName(e.target.value)}
+            />
+          </Field>
+        </form>
+      </SlidePanel>
     </div>
   );
 }

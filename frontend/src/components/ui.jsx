@@ -174,6 +174,64 @@ export function Pagination({ page, pageSize, total, onPage }) {
   );
 }
 
+export function SlidePanel({ open, onClose, title, children, footer, wide = false }) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const frame = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setVisible(true));
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    setVisible(false);
+    const timer = setTimeout(() => setMounted(false), 300);
+    return () => clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!mounted) return null;
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <div
+        className={`absolute inset-0 bg-ink-900/30 backdrop-blur-sm transition-opacity duration-300 ${
+          visible ? "opacity-100" : "opacity-0"
+        }`}
+        onClick={onClose}
+      />
+      <div
+        className={`absolute inset-y-0 right-0 flex w-full ${
+          wide ? "max-w-3xl" : "max-w-lg"
+        } flex-col bg-white shadow-soft transition-transform duration-300 ease-out ${
+          visible ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between border-b border-ink-100 px-5 py-4">
+          <h3 className="text-base font-semibold text-ink-900">{title}</h3>
+          <button className="btn-ghost px-2 py-1" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex justify-end gap-2 border-t border-ink-100 px-5 py-3">{footer}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Modal({ open, onClose, title, children, footer, wide = false }) {
   if (!open) return null;
   return (
