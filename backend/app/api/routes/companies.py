@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import bindparam, delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_user, get_current_user
 from app.core.database import get_db
-from app.models import Company, Contact, EnrichmentLog, User
+from app.models import Company, CompanySavedFilter, Contact, EnrichmentLog, User
 from app.schemas.company import (
     BulkDomainItem,
     BulkDomainResult,
@@ -18,6 +19,9 @@ from app.schemas.company import (
     CompanyFilterOptions,
     CompanyList,
     CompanyOut,
+    CompanySavedFilterCreate,
+    CompanySavedFilterList,
+    CompanySavedFilterOut,
     CompanyUpdate,
     DomainJobOut,
     DomainLookupResult,
@@ -29,6 +33,13 @@ from app.services.apollo_mapper import map_organization, map_person
 from app.services.apollo_service import ApolloError
 from app.services import domain_jobs
 from app.services.company_domains import add_domain, list_domains
+from app.services.company_export import export_csv, export_xlsx
+from app.services.company_filters import (
+    SEGMENT_KEYS,
+    apply_company_filters,
+    contact_counts,
+    employee_range,
+)
 from app.services.company_import_fields import (
     normalize_partner_status,
     normalize_sector_confidence,
@@ -103,29 +114,9 @@ def _apply_found_domain(db: Session, company: Company, domain: str | None) -> bo
     return added
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024  # 5 MB
-
-# extra_data keys (case-insensitive) treated as "market segment".
-SEGMENT_KEYS = (
-    "market segment",
-    "market_segment",
-    "market segments",
-    "market_segments",
-    "segment",
-    "segments",
-    "sector",
-)
+MAX_EXPORT_ROWS = 10_000
 
 router = APIRouter(prefix="/companies", tags=["companies"])
-
-
-def _segment_exists_clause(value: str):
-    return text(
-        "EXISTS (SELECT 1 FROM jsonb_each_text(companies.extra_data) e "
-        "WHERE lower(e.key) IN :seg_keys AND lower(e.value) = :seg_val)"
-    ).bindparams(
-        bindparam("seg_keys", value=list(SEGMENT_KEYS), expanding=True),
-        bindparam("seg_val", value=value.lower()),
-    )
 
 
 def _with_contact_count(db: Session, company: Company) -> CompanyOut:
@@ -136,6 +127,35 @@ def _with_contact_count(db: Session, company: Company) -> CompanyOut:
     data.contact_count = count or 0
     data.domains = list_domains(company)
     return data
+
+
+def _company_query_params(
+    *,
+    search: str | None,
+    industry: str | None,
+    country: str | None,
+    city: str | None,
+    market_segment: str | None,
+    tier: str | None,
+    min_employees: int | None,
+    max_employees: int | None,
+    employees: str | None,
+    enrichment_status: str | None,
+):
+    min_e, max_e = min_employees, max_employees
+    if employees and min_e is None and max_e is None:
+        min_e, max_e = employee_range(employees)
+    return {
+        "search": search,
+        "industry": industry,
+        "country": country,
+        "city": city,
+        "market_segment": market_segment,
+        "tier": tier,
+        "min_employees": min_e,
+        "max_employees": max_e,
+        "enrichment_status": enrichment_status,
+    }
 
 
 @router.get("", response_model=CompanyList)
@@ -150,37 +170,24 @@ def list_companies(
     tier: str | None = None,
     min_employees: int | None = Query(default=None, ge=0),
     max_employees: int | None = Query(default=None, ge=0),
+    employees: str | None = Query(default=None, description="Employee bucket id from saved filters"),
     enrichment_status: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    stmt = select(Company)
-    if search:
-        like = f"%{search.lower()}%"
-        stmt = stmt.where(
-            or_(
-                func.lower(Company.name).like(like),
-                func.lower(Company.domain).like(like),
-                func.lower(Company.industry).like(like),
-                func.lower(Company.country).like(like),
-            )
-        )
-    if industry:
-        stmt = stmt.where(func.lower(Company.industry) == industry.lower())
-    if country:
-        stmt = stmt.where(func.lower(Company.country) == country.lower())
-    if city:
-        stmt = stmt.where(func.lower(Company.city) == city.lower())
-    if min_employees is not None:
-        stmt = stmt.where(Company.employee_count >= min_employees)
-    if max_employees is not None:
-        stmt = stmt.where(Company.employee_count <= max_employees)
-    if market_segment:
-        stmt = stmt.where(_segment_exists_clause(market_segment))
-    if tier:
-        stmt = stmt.where(func.lower(Company.tier) == tier.lower())
-    if enrichment_status:
-        stmt = stmt.where(Company.enrichment_status == enrichment_status)
+    filters = _company_query_params(
+        search=search,
+        industry=industry,
+        country=country,
+        city=city,
+        market_segment=market_segment,
+        tier=tier,
+        min_employees=min_employees,
+        max_employees=max_employees,
+        employees=employees,
+        enrichment_status=enrichment_status,
+    )
+    stmt = apply_company_filters(select(Company), **filters)
 
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     stmt = stmt.order_by(Company.updated_at.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -216,6 +223,97 @@ def company_filter_options(db: Session = Depends(get_db), _: User = Depends(get_
         cities=_distinct(Company.city),
         segments=[r.v for r in segment_rows],
         tiers=_distinct(Company.tier),
+    )
+
+
+@router.get("/saved-filters", response_model=CompanySavedFilterList)
+def list_saved_filters(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    rows = (
+        db.execute(select(CompanySavedFilter).order_by(CompanySavedFilter.updated_at.desc()))
+        .scalars()
+        .all()
+    )
+    return CompanySavedFilterList(items=[CompanySavedFilterOut.model_validate(r) for r in rows])
+
+
+@router.post("/saved-filters", response_model=CompanySavedFilterOut, status_code=status.HTTP_201_CREATED)
+def create_saved_filter(
+    payload: CompanySavedFilterCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row = CompanySavedFilter(
+        name=payload.name.strip(),
+        criteria=payload.criteria.model_dump(),
+        created_by=user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return CompanySavedFilterOut.model_validate(row)
+
+
+@router.delete("/saved-filters/{filter_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_saved_filter(
+    filter_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    row = db.get(CompanySavedFilter, filter_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Saved filter not found.")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+@router.get("/export")
+def export_companies(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+    format: str = Query(default="csv", pattern="^(csv|xlsx)$"),
+    search: str | None = None,
+    industry: str | None = None,
+    country: str | None = None,
+    city: str | None = None,
+    market_segment: str | None = None,
+    tier: str | None = None,
+    min_employees: int | None = Query(default=None, ge=0),
+    max_employees: int | None = Query(default=None, ge=0),
+    employees: str | None = None,
+    enrichment_status: str | None = None,
+):
+    """Export filtered companies as CSV or XLSX (max 10,000 rows)."""
+    filters = _company_query_params(
+        search=search,
+        industry=industry,
+        country=country,
+        city=city,
+        market_segment=market_segment,
+        tier=tier,
+        min_employees=min_employees,
+        max_employees=max_employees,
+        employees=employees,
+        enrichment_status=enrichment_status,
+    )
+    stmt = apply_company_filters(select(Company), **filters)
+    stmt = stmt.order_by(Company.updated_at.desc()).limit(MAX_EXPORT_ROWS)
+    companies = db.execute(stmt).scalars().all()
+    counts = contact_counts(db, [c.id for c in companies])
+
+    if format == "xlsx":
+        content = export_xlsx(companies, counts)
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = "companies-export.xlsx"
+    else:
+        content = export_csv(companies, counts)
+        media = "text/csv; charset=utf-8"
+        filename = "companies-export.csv"
+
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

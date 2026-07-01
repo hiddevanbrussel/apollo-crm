@@ -15,6 +15,7 @@ from app.schemas.research import (
     ResearchEnrichRequest,
     ResearchEnrichResult,
     ResearchPeopleFromCompanies,
+    ResearchRelatedCompaniesOut,
     ResearchResultDetail,
     ResearchResultsPage,
     ResearchSearchList,
@@ -159,6 +160,26 @@ def _get_result_or_404(db: Session, search_id: int, result_id: int) -> tuple[Res
     if not result or result.search_id != search_id:
         raise HTTPException(status_code=404, detail="Research result not found.")
     return search, result
+
+
+@router.get(
+    "/searches/{search_id}/results/{result_id}/related",
+    response_model=ResearchRelatedCompaniesOut,
+)
+def list_company_result_related(
+    search_id: int,
+    result_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search, result = _get_result_or_404(db, search_id, result_id)
+    try:
+        payload = research_service.list_related_companies_for_result(
+            db, parent_search=search, company_result=result
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchRelatedCompaniesOut(**payload)
 
 
 @router.get(

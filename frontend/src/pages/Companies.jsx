@@ -11,6 +11,23 @@ const EMPTY = { name: "", domain: "", website: "", industry: "", country: "", ci
 
 const EMPTY_FILTERS = { industry: "", country: "", city: "", market_segment: "", tier: "", employees: "", status: "" };
 
+function buildFilterParams(search, filters) {
+  return {
+    search: search || undefined,
+    enrichment_status: filters.status || undefined,
+    industry: filters.industry || undefined,
+    country: filters.country || undefined,
+    city: filters.city || undefined,
+    market_segment: filters.market_segment || undefined,
+    tier: filters.tier || undefined,
+    employees: filters.employees || undefined,
+  };
+}
+
+function activeFilterCountFor(filters) {
+  return Object.values(filters).filter(Boolean).length;
+}
+
 const EMPLOYEE_BUCKETS = [
   { id: "1-10", label: "1–10", min: 1, max: 10 },
   { id: "11-50", label: "11–50", min: 11, max: 50 },
@@ -51,6 +68,11 @@ export default function Companies() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(params.get("search") || "");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [savedFilters, setSavedFilters] = useState([]);
+  const [showSaveFilter, setShowSaveFilter] = useState(false);
+  const [saveFilterName, setSaveFilterName] = useState("");
+  const [savingFilter, setSavingFilter] = useState(false);
+  const [exporting, setExporting] = useState(null);
   const [filterOptions, setFilterOptions] = useState({ industries: [], countries: [], cities: [], segments: [], tiers: [] });
   const [showFilters, setShowFilters] = useState(true);
   const [page, setPage] = useState(1);
@@ -70,6 +92,10 @@ export default function Companies() {
       .then((res) => setFilterOptions(res.data))
       .catch(() => {});
     api
+      .get("/companies/saved-filters")
+      .then((res) => setSavedFilters(res.data.items || []))
+      .catch(() => {});
+    api
       .get("/apollo/status")
       .then((res) => setApolloReady(res.data.enabled && res.data.configured))
       .catch(() => setApolloReady(false));
@@ -78,18 +104,9 @@ export default function Companies() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const bucket = EMPLOYEE_BUCKETS.find((b) => b.id === filters.employees);
       const { data } = await api.get("/companies", {
         params: {
-          search: search || undefined,
-          enrichment_status: filters.status || undefined,
-          industry: filters.industry || undefined,
-          country: filters.country || undefined,
-          city: filters.city || undefined,
-          market_segment: filters.market_segment || undefined,
-          tier: filters.tier || undefined,
-          min_employees: bucket?.min,
-          max_employees: bucket?.max,
+          ...buildFilterParams(search, filters),
           page,
           page_size: pageSize,
         },
@@ -123,7 +140,87 @@ export default function Companies() {
     setPage(1);
   };
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = activeFilterCountFor(filters);
+
+  const loadSavedFilters = async () => {
+    try {
+      const { data } = await api.get("/companies/saved-filters");
+      setSavedFilters(data.items || []);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const applySavedFilter = (saved) => {
+    const criteria = saved.criteria || {};
+    setSearch(criteria.search || "");
+    setFilters({
+      industry: criteria.industry || "",
+      country: criteria.country || "",
+      city: criteria.city || "",
+      market_segment: criteria.market_segment || "",
+      tier: criteria.tier || "",
+      employees: criteria.employees || "",
+      status: criteria.status || "",
+    });
+    setPage(1);
+    setParams(criteria.search ? { search: criteria.search } : {});
+  };
+
+  const saveCurrentFilter = async (e) => {
+    e?.preventDefault();
+    if (!saveFilterName.trim()) {
+      toast.info("Give this filter set a name first.");
+      return;
+    }
+    setSavingFilter(true);
+    try {
+      await api.post("/companies/saved-filters", {
+        name: saveFilterName.trim(),
+        criteria: { search, ...filters },
+      });
+      toast.success("Filter saved.");
+      setShowSaveFilter(false);
+      setSaveFilterName("");
+      await loadSavedFilters();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingFilter(false);
+    }
+  };
+
+  const deleteSavedFilter = async (id) => {
+    if (!confirm("Delete this saved filter?")) return;
+    try {
+      await api.delete(`/companies/saved-filters/${id}`);
+      setSavedFilters((prev) => prev.filter((f) => f.id !== id));
+      toast.success("Saved filter deleted.");
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const exportCompanies = async (format) => {
+    setExporting(format);
+    try {
+      const res = await api.get("/companies/export", {
+        params: { format, ...buildFilterParams(search, filters) },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(res.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = format === "xlsx" ? "companies-export.xlsx" : "companies-export.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported as ${format.toUpperCase()}.`);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const toggleOne = (id) =>
     setSelected((prev) => {
@@ -243,6 +340,22 @@ export default function Companies() {
           <p className="text-sm text-ink-500">Manage all companies in your CRM.</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary"
+            onClick={() => exportCompanies("csv")}
+            disabled={exporting || loading}
+          >
+            {exporting === "csv" ? <Spinner className="h-4 w-4" /> : <Icon.Download width={18} height={18} />}
+            Export CSV
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={() => exportCompanies("xlsx")}
+            disabled={exporting || loading}
+          >
+            {exporting === "xlsx" ? <Spinner className="h-4 w-4" /> : <Icon.Download width={18} height={18} />}
+            Export Excel
+          </button>
           <button
             className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50"
             onClick={deleteAll}
@@ -399,11 +512,22 @@ export default function Companies() {
           <div className="card overflow-hidden">
             <div className="flex items-center justify-between border-b border-ink-100 px-4 py-3">
               <h3 className="text-sm font-semibold text-ink-900">Filters</h3>
-              {activeFilterCount > 0 && (
-                <button className="text-xs font-medium text-brand-600 hover:underline" onClick={clearFilters}>
-                  Clear ({activeFilterCount})
+              <div className="flex items-center gap-2">
+                <button
+                  className="text-xs font-medium text-brand-600 hover:underline"
+                  onClick={() => {
+                    setSaveFilterName("");
+                    setShowSaveFilter(true);
+                  }}
+                >
+                  Save
                 </button>
-              )}
+                {activeFilterCount > 0 && (
+                  <button className="text-xs font-medium text-brand-600 hover:underline" onClick={clearFilters}>
+                    Clear ({activeFilterCount})
+                  </button>
+                )}
+              </div>
             </div>
             <div className="divide-y divide-ink-100">
               <FilterSection title="Industry" icon={Icon.Building} active={!!filters.industry} defaultOpen={!!filters.industry}>
@@ -474,6 +598,34 @@ export default function Companies() {
                 </select>
               </FilterSection>
             </div>
+
+            {savedFilters.length > 0 && (
+              <div className="border-t border-ink-100 px-4 py-4">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-400">Saved filters</h4>
+                <ul className="space-y-1">
+                  {savedFilters.map((saved) => (
+                    <li key={saved.id} className="flex items-center gap-1 rounded-lg hover:bg-ink-50">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 truncate px-2 py-2 text-left text-sm text-ink-700 hover:text-brand-600"
+                        onClick={() => applySavedFilter(saved)}
+                        title={saved.name}
+                      >
+                        {saved.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost px-2 py-1 text-red-500"
+                        onClick={() => deleteSavedFilter(saved.id)}
+                        aria-label={`Delete ${saved.name}`}
+                      >
+                        <Icon.Trash width={14} height={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </aside>
       )}
@@ -508,6 +660,37 @@ export default function Companies() {
           <div className="col-span-2">
             <Field label="Description"><textarea className="input" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
           </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showSaveFilter}
+        onClose={() => !savingFilter && setShowSaveFilter(false)}
+        title="Save filter"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowSaveFilter(false)} disabled={savingFilter}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={saveCurrentFilter} disabled={savingFilter}>
+              {savingFilter && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={saveCurrentFilter} className="space-y-4">
+          <p className="text-sm text-ink-500">
+            Saves the current search text and all sidebar filters so you can reload them later.
+          </p>
+          <Field label="Name *">
+            <input
+              className="input"
+              required
+              value={saveFilterName}
+              onChange={(e) => setSaveFilterName(e.target.value)}
+              placeholder="e.g. NL SaaS Tier 1"
+            />
+          </Field>
         </form>
       </Modal>
     </div>

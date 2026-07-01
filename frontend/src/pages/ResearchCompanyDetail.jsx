@@ -34,6 +34,7 @@ export default function ResearchCompanyDetail() {
   const toast = useToast();
   const [company, setCompany] = useState(null);
   const [contacts, setContacts] = useState([]);
+  const [related, setRelated] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [tab, setTab] = useState("overview");
   const [apolloReady, setApolloReady] = useState(false);
@@ -47,12 +48,14 @@ export default function ResearchCompanyDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [{ data }, contactsRes] = await Promise.all([
+      const [{ data }, contactsRes, relatedRes] = await Promise.all([
         api.get(`/research/searches/${searchId}/results/${resultId}`),
         api.get(`/research/searches/${searchId}/results/${resultId}/contacts`),
+        api.get(`/research/searches/${searchId}/results/${resultId}/related`),
       ]);
       setCompany(data);
       setContacts(contactsRes.data.items || []);
+      setRelated(relatedRes.data.items || []);
     } catch (err) {
       toast.error(apiError(err));
       navigate(`/research/${searchId}`);
@@ -149,6 +152,8 @@ export default function ResearchCompanyDetail() {
     }
   };
 
+  const relatedOthers = related.filter((r) => !r.is_current).length;
+
   if (!company) return <PageLoader />;
 
   const fields = company.fields || {};
@@ -195,6 +200,7 @@ export default function ResearchCompanyDetail() {
         <div className="flex gap-1 border-b border-ink-100 px-4">
           {[
             ["overview", "Overview"],
+            ["linked", relatedOthers ? `Linked (${relatedOthers + 1})` : "Linked"],
             ["contacts", `Contacts (${contacts.length})`],
             ["apollo", "Apollo data"],
           ].map(([key, label]) => (
@@ -226,6 +232,96 @@ export default function ResearchCompanyDetail() {
             </dl>
           )}
 
+          {tab === "linked" && (
+            <div className="space-y-4">
+              <p className="text-sm text-ink-500">
+                {fields.domain ? (
+                  <>
+                    Records linked via domain <strong className="font-mono text-ink-700">{fields.domain}</strong>
+                    {relatedOthers > 0
+                      ? ` — ${relatedOthers} other record(s) plus CRM if present.`
+                      : related.length > 1
+                        ? " — includes CRM record."
+                        : " — no other research records with this domain yet."}
+                  </>
+                ) : (
+                  "No domain on this record — companies can only be linked by domain."
+                )}
+              </p>
+
+              {related.length === 0 ? (
+                <EmptyState
+                  title="Nothing to link yet"
+                  description="Enrich this company to get a domain, or it may be the only record with this domain."
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="border-b border-ink-100">
+                      <tr>
+                        <th className="table-th">Name</th>
+                        <th className="table-th">Domain</th>
+                        <th className="table-th">Source</th>
+                        <th className="table-th">Dataset</th>
+                        <th className="table-th">Status</th>
+                        <th className="table-th"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-ink-100">
+                      {related.map((row) => (
+                        <tr
+                          key={`${row.source}-${row.id}`}
+                          className={row.is_current ? "bg-brand-50/40 hover:bg-brand-50/60" : "hover:bg-ink-50/60"}
+                        >
+                          <td className="table-td">
+                            <span className="font-medium text-ink-900">
+                              {row.name || "—"}
+                              {row.is_current && (
+                                <span className="ml-2 text-xs font-normal text-brand-600">(current)</span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="table-td font-mono text-xs">{row.domain || "—"}</td>
+                          <td className="table-td">
+                            {row.source === "crm" ? (
+                              <SourceBadge source={row.record_source || "manual"} />
+                            ) : (
+                              <span className="badge-mono border border-brand-200 bg-brand-50 text-brand-600">
+                                RESEARCH
+                              </span>
+                            )}
+                          </td>
+                          <td className="table-td text-sm text-ink-600">
+                            {row.source === "crm" ? "CRM" : row.search_name || "—"}
+                          </td>
+                          <td className="table-td">
+                            <StatusBadge status={row.enriched ? "enriched" : "none"} />
+                          </td>
+                          <td className="table-td text-right">
+                            {row.is_current ? (
+                              <span className="text-xs text-ink-400">You are here</span>
+                            ) : row.source === "crm" ? (
+                              <Link to={`/companies/${row.id}`} className="btn-ghost px-2 py-1 text-sm">
+                                Open CRM
+                              </Link>
+                            ) : (
+                              <Link
+                                to={`/research/${row.search_id}/companies/${row.id}`}
+                                className="btn-ghost px-2 py-1 text-sm"
+                              >
+                                Open
+                              </Link>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           {tab === "contacts" && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -233,7 +329,7 @@ export default function ResearchCompanyDetail() {
                   {contactsLoading
                     ? "Loading contacts…"
                     : contacts.length
-                      ? `${contacts.length} contact(s) from prior research and CRM records at ${fields.domain || "this domain"}`
+                      ? `${contacts.length} contact(s) linked via domain ${fields.domain || "this domain"} (includes contacts from all linked companies)`
                       : fields.domain
                         ? `No contacts found yet for ${fields.domain}. Use “Find contacts” to search Apollo.`
                         : "No domain on this company — contacts cannot be matched."}

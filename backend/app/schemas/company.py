@@ -111,6 +111,36 @@ class CompanyFilterOptions(BaseModel):
     tiers: list[str]
 
 
+class CompanyFilterCriteria(BaseModel):
+    search: str = ""
+    industry: str = ""
+    country: str = ""
+    city: str = ""
+    market_segment: str = ""
+    tier: str = ""
+    employees: str = ""
+    status: str = ""
+
+
+class CompanySavedFilterCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    criteria: CompanyFilterCriteria = Field(default_factory=CompanyFilterCriteria)
+
+
+class CompanySavedFilterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    criteria: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class CompanySavedFilterList(BaseModel):
+    items: list[CompanySavedFilterOut]
+
+
 class BulkEnrichRequest(BaseModel):
     company_ids: list[int] = Field(..., min_length=1)
 

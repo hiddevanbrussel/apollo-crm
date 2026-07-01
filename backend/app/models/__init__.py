@@ -5,6 +5,7 @@ from app.models.logokit_settings import LogokitSettings
 from app.models.prospeo_settings import ProspeoSettings
 from app.models.azure_ad_settings import AzureAdSettings
 from app.models.company import Company
+from app.models.company_saved_filter import CompanySavedFilter
 from app.models.contact import Contact
 from app.models.search_history import SearchHistory
 from app.models.enrichment_log import EnrichmentLog
@@ -18,6 +19,7 @@ __all__ = [
     "ProspeoSettings",
     "AzureAdSettings",
     "Company",
+    "CompanySavedFilter",
     "Contact",
     "SearchHistory",
     "EnrichmentLog",

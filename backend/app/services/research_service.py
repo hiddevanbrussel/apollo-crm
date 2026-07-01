@@ -11,7 +11,7 @@ import io
 import logging
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Company, Contact, ResearchResult, ResearchSearch, SearchHistory
@@ -535,6 +535,131 @@ def _dedupe_key(*, apollo_id: str | None, email: str | None, name: str | None) -
     return ""
 
 
+def _company_results_for_domain(
+    db: Session,
+    domain: str,
+    *,
+    apollo_id: str | None = None,
+) -> list[tuple[ResearchResult, ResearchSearch]]:
+    """Research company snapshots sharing a domain (or Apollo id)."""
+    domain = domain.strip().lower()
+    match_clauses = []
+    if domain:
+        match_clauses.extend(
+            [
+                func.lower(ResearchResult.raw_data["primary_domain"].astext) == domain,
+                func.lower(ResearchResult.raw_data["domain"].astext) == domain,
+            ]
+        )
+    if apollo_id:
+        match_clauses.append(ResearchResult.apollo_id == apollo_id)
+
+    if not match_clauses:
+        return []
+
+    rows = (
+        db.execute(
+            select(ResearchResult, ResearchSearch)
+            .join(ResearchSearch, ResearchResult.search_id == ResearchSearch.id)
+            .where(
+                ResearchResult.entity_type == "company",
+                or_(*match_clauses),
+            )
+            .order_by(ResearchResult.id.desc())
+        )
+        .all()
+    )
+
+    verified: list[tuple[ResearchResult, ResearchSearch]] = []
+    seen_ids: set[int] = set()
+    for result, search in rows:
+        if result.id in seen_ids:
+            continue
+        result_domain = domain_from_result(result)
+        result_apollo = _apollo_id_for_result(result)
+        if domain and result_domain == domain:
+            verified.append((result, search))
+            seen_ids.add(result.id)
+        elif apollo_id and result_apollo == apollo_id:
+            verified.append((result, search))
+            seen_ids.add(result.id)
+    return verified
+
+
+def _crm_company_for_domain(db: Session, domain: str) -> Company | None:
+    domain = domain.strip().lower()
+    if not domain:
+        return None
+    return db.execute(
+        select(Company).where(
+            or_(
+                func.lower(Company.domain) == domain,
+                Company.domains.contains([domain]),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def list_related_companies_for_result(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    company_result: ResearchResult,
+) -> dict[str, Any]:
+    """Link research and CRM records that share this company's domain."""
+    if parent_search.query_type != "organizations":
+        raise ApolloError("Related companies are only available for company research.", status_code=400)
+    if company_result.entity_type != "company":
+        raise ApolloError("This record is not a company.", status_code=400)
+
+    domain = domain_from_result(company_result)
+    apollo_id = _apollo_id_for_result(company_result)
+    if not domain and not apollo_id:
+        return {"domain": None, "total": 0, "items": []}
+
+    items: list[dict[str, Any]] = []
+
+    for result, search in _company_results_for_domain(db, domain or "", apollo_id=apollo_id):
+        row = _flatten_org(result.raw_data or {})
+        rid = _apollo_id_for_result(result)
+        items.append(
+            {
+                "source": "research",
+                "id": result.id,
+                "search_id": search.id,
+                "search_name": search.name,
+                "name": row.get("name") or result.name,
+                "domain": row.get("domain") or domain,
+                "apollo_id": rid,
+                "enriched": is_enriched(result.raw_data),
+                "is_current": result.id == company_result.id,
+                "record_source": None,
+            }
+        )
+
+    if domain:
+        crm = _crm_company_for_domain(db, domain)
+        if crm:
+            crm_apollo = (crm.apollo_id or "").strip() or None
+            items.append(
+                {
+                    "source": "crm",
+                    "id": crm.id,
+                    "search_id": None,
+                    "search_name": None,
+                    "name": crm.name,
+                    "domain": crm.domain or domain,
+                    "apollo_id": crm_apollo,
+                    "enriched": crm.enrichment_status == "enriched",
+                    "is_current": False,
+                    "record_source": crm.source,
+                }
+            )
+
+    items.sort(key=lambda row: (not row["is_current"], row["source"] != "crm", row["name"] or ""))
+    return {"domain": domain, "total": len(items), "items": items}
+
+
 def list_contacts_for_company_result(
     db: Session,
     *,
@@ -551,21 +676,23 @@ def list_contacts_for_company_result(
     if not domain:
         return {"domain": None, "total": 0, "items": []}
 
-    parent_id = str(parent_search.id)
-    result_id = str(company_result.id)
+    related_results = _company_results_for_domain(
+        db, domain, apollo_id=_apollo_id_for_result(company_result)
+    )
+    related_result_ids = [str(result.id) for result, _ in related_results]
+
+    people_search_clauses = [
+        ResearchSearch.criteria["_source_company_domain"].astext == domain,
+        ResearchSearch.criteria["organization_domains"].contains([domain]),
+    ]
+    if related_result_ids:
+        people_search_clauses.append(
+            ResearchSearch.criteria["_source_company_result_id"].astext.in_(related_result_ids)
+        )
 
     people_search_stmt = select(ResearchSearch.id).where(
         ResearchSearch.query_type == "people",
-        or_(
-            ResearchSearch.criteria["_source_company_result_id"].astext == result_id,
-            and_(
-                ResearchSearch.criteria["_source_search_id"].astext == parent_id,
-                or_(
-                    ResearchSearch.criteria["_source_company_domain"].astext == domain,
-                    ResearchSearch.criteria["organization_domains"].contains([domain]),
-                ),
-            ),
-        ),
+        or_(*people_search_clauses),
     )
     people_search_ids = db.execute(people_search_stmt).scalars().all()
 
@@ -620,14 +747,7 @@ def list_contacts_for_company_result(
                 }
             )
 
-    company = db.execute(
-        select(Company).where(
-            or_(
-                Company.domain == domain,
-                Company.domains.contains([domain]),
-            )
-        )
-    ).scalar_one_or_none()
+    company = _crm_company_for_domain(db, domain)
 
     if company:
         crm_contacts = (

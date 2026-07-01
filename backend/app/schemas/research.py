@@ -95,3 +95,22 @@ class ResearchCompanyContactsOut(BaseModel):
     domain: str | None = None
     total: int = 0
     items: list[ResearchCompanyContactOut] = []
+
+
+class ResearchRelatedCompanyOut(BaseModel):
+    source: str  # research | crm
+    id: int
+    search_id: int | None = None
+    search_name: str | None = None
+    name: str | None = None
+    domain: str | None = None
+    apollo_id: str | None = None
+    enriched: bool = False
+    is_current: bool = False
+    record_source: str | None = None
+
+
+class ResearchRelatedCompaniesOut(BaseModel):
+    domain: str | None = None
+    total: int = 0
+    items: list[ResearchRelatedCompanyOut] = []
