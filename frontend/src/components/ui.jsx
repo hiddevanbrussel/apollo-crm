@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getLogokit, logoUrl } from "../api/logokit";
 import { Icon } from "./icons";
 
@@ -261,6 +261,68 @@ export function Field({ label, children, hint }) {
       <label className="label">{label}</label>
       {children}
       {hint ? <p className="mt-1 text-xs text-ink-400">{hint}</p> : null}
+    </div>
+  );
+}
+
+export function ActionMenuItem({ onClick, disabled, icon, children, className = "" }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink-700 transition hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+    >
+      {icon ? <span className="flex-shrink-0 text-ink-500">{icon}</span> : null}
+      <span className="min-w-0 flex-1">{children}</span>
+    </button>
+  );
+}
+
+export function ActionMenu({ trigger, triggerClassName = "btn-secondary", align = "right", children }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className={triggerClassName}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        {trigger}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className={`absolute z-30 mt-1 min-w-[11rem] overflow-hidden rounded-lg border border-ink-200 bg-white py-1 shadow-lg ${
+            align === "right" ? "right-0" : "left-0"
+          }`}
+          onClick={() => setOpen(false)}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }

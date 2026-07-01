@@ -80,6 +80,11 @@ export const Icon = {
       <path d="m9 18 6-6-6-6" />
     </svg>
   ),
+  ChevronDown: (p) => (
+    <svg {...base} {...p}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  ),
   External: (p) => (
     <svg {...base} {...p}>
       <path d="M15 3h6v6" />

@@ -15,6 +15,30 @@ class ResearchDatasetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
 
 
+class ResearchContactDatasetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class ResearchContactAdd(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    company_result_id: int
+    title: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    seniority: str | None = None
+    linkedin_url: str | None = None
+
+
+class ResearchCompanyOption(BaseModel):
+    id: int
+    name: str | None = None
+    domain: str | None = None
+
+
+class ResearchCompanyOptionList(BaseModel):
+    items: list[ResearchCompanyOption] = []
+
+
 class ResearchCompanyAdd(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     domain: str | None = None

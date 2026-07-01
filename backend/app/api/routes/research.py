@@ -11,6 +11,9 @@ from app.models import ResearchResult, ResearchSearch, User
 from app.schemas.research import (
     ResearchCompanyAdd,
     ResearchCompanyContactsOut,
+    ResearchCompanyOptionList,
+    ResearchContactAdd,
+    ResearchContactDatasetCreate,
     ResearchCreate,
     ResearchDatasetCreate,
     ResearchDatasetImportResult,
@@ -26,6 +29,13 @@ from app.schemas.research import (
 )
 from app.services import research_service
 from app.services.apollo_service import ApolloError
+from app.services.research_contact_dataset import (
+    add_contact_to_contact_dataset,
+    create_manual_contact_dataset,
+    delete_contact_from_contact_dataset,
+    is_manual_contact_dataset,
+    update_contact_in_contact_dataset,
+)
 from app.services.research_dataset import (
     add_company_to_dataset,
     create_manual_dataset as create_manual_dataset_record,
@@ -111,6 +121,93 @@ def create_manual_dataset(
     return _detail(db, search)
 
 
+@router.post("/searches/{search_id}/contact-datasets", response_model=ResearchDetail)
+def create_contact_dataset(
+    search_id: int,
+    payload: ResearchContactDatasetCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create an empty manual contact recordset linked to a company recordset."""
+    parent = db.get(ResearchSearch, search_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    try:
+        search = create_manual_contact_dataset(
+            db,
+            parent_search=parent,
+            name=payload.name.strip(),
+            created_by=user.id,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return _detail(db, search)
+
+
+@router.get("/searches/{search_id}/company-options", response_model=ResearchCompanyOptionList)
+def list_company_options(
+    search_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    if search.query_type != "organizations":
+        raise HTTPException(status_code=400, detail="Company options are only available for company recordsets.")
+
+    rows = (
+        db.execute(
+            select(ResearchResult)
+            .where(
+                ResearchResult.search_id == search_id,
+                ResearchResult.entity_type == "company",
+            )
+            .order_by(ResearchResult.name, ResearchResult.id)
+        )
+        .scalars()
+        .all()
+    )
+    items = []
+    for row in rows:
+        fields = research_service.flatten("organizations", row.raw_data or {})
+        items.append(
+            {
+                "id": row.id,
+                "name": fields.get("name") or row.name,
+                "domain": fields.get("domain"),
+            }
+        )
+    return ResearchCompanyOptionList(items=items)
+
+
+@router.post("/searches/{search_id}/contacts", response_model=ResearchResultDetail)
+def add_contact_to_contact_search(
+    search_id: int,
+    payload: ResearchContactAdd,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    try:
+        result = add_contact_to_contact_dataset(
+            db,
+            search,
+            name=payload.name,
+            company_result_id=payload.company_result_id,
+            title=payload.title,
+            email=payload.email,
+            phone=payload.phone,
+            seniority=payload.seniority,
+            linkedin_url=payload.linkedin_url,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
 @router.post("/searches/{search_id}/results", response_model=ResearchResultDetail)
 def add_company_to_search(
     search_id: int,
@@ -176,6 +273,38 @@ def update_company_in_search(
     return ResearchResultDetail(**research_service.result_detail(result, search))
 
 
+@router.patch("/searches/{search_id}/contacts/{result_id}", response_model=ResearchResultDetail)
+def update_contact_in_contact_search(
+    search_id: int,
+    result_id: int,
+    payload: ResearchContactAdd,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search = db.get(ResearchSearch, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Research search not found.")
+    result = db.get(ResearchResult, result_id)
+    if not result or result.search_id != search_id:
+        raise HTTPException(status_code=404, detail="Research result not found.")
+    try:
+        result = update_contact_in_contact_dataset(
+            db,
+            search,
+            result,
+            name=payload.name,
+            company_result_id=payload.company_result_id,
+            title=payload.title,
+            email=payload.email,
+            phone=payload.phone,
+            seniority=payload.seniority,
+            linkedin_url=payload.linkedin_url,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return ResearchResultDetail(**research_service.result_detail(result, search))
+
+
 @router.post("/searches/{search_id}/import", response_model=ResearchDatasetImportResult)
 async def import_companies_to_search(
     search_id: int,
@@ -214,7 +343,10 @@ def delete_search_result(
     if not result or result.search_id != search_id:
         raise HTTPException(status_code=404, detail="Research result not found.")
     try:
-        delete_dataset_result(db, search, result)
+        if is_manual_contact_dataset(search):
+            delete_contact_from_contact_dataset(db, search, result)
+        else:
+            delete_dataset_result(db, search, result)
     except ApolloError as exc:
         raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
     return None

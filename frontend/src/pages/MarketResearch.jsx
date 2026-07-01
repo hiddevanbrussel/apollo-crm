@@ -43,6 +43,13 @@ function buildResearchTree(searches) {
 }
 
 function ResearchTypeBadge({ search }) {
+  if (
+    search.criteria?._dataset_source === "manual" &&
+    search.query_type === "people" &&
+    search.criteria?._source_search_id
+  ) {
+    return <span className="badge bg-emerald-50 text-emerald-700">Manual contacts</span>;
+  }
   if (search.criteria?._source_search_id) {
     return <span className="badge bg-sky-50 text-sky-700">Contacts</span>;
   }
@@ -266,7 +273,11 @@ export default function MarketResearch() {
   };
 
   const remove = async (s) => {
-    if (!confirm(`Delete research "${s.name}"? This cannot be undone.`)) return;
+    const isContactList = s.query_type === "people" && s.criteria?._source_search_id;
+    const msg = isContactList
+      ? `Delete contact recordset "${s.name}"? Contacts remain linked to their companies — only this list is removed.`
+      : `Delete research "${s.name}"? This cannot be undone.`;
+    if (!confirm(msg)) return;
     try {
       await api.delete(`/research/searches/${s.id}`);
       toast.success("Research deleted.");

@@ -235,6 +235,27 @@ def _persist_search(
     )
     db.commit()
     db.refresh(search)
+
+    if query_type == "people":
+        parent_id = (criteria or {}).get("_source_search_id")
+        if parent_id is not None:
+            from app.services.research_company_contacts import sync_people_search_to_vault
+
+            parent = db.get(ResearchSearch, int(parent_id))
+            if parent and parent.query_type == "organizations":
+                company_result = None
+                company_result_id = (criteria or {}).get("_source_company_result_id")
+                if company_result_id is not None:
+                    try:
+                        company_result = db.get(ResearchResult, int(company_result_id))
+                    except (TypeError, ValueError):
+                        company_result = None
+                sync_people_search_to_vault(
+                    db,
+                    parent_search=parent,
+                    people_search=search,
+                    company_result=company_result,
+                )
     return search
 
 
@@ -251,8 +272,15 @@ def result_detail(result: ResearchResult, search: ResearchSearch) -> dict[str, A
         "search_id": search.id,
         "search_name": search.name,
         "query_type": search.query_type,
-        "editable": search.query_type == "organizations"
-        and criteria.get("_dataset_source") == "manual",
+        "editable": (
+            search.query_type == "organizations"
+            and criteria.get("_dataset_source") == "manual"
+        )
+        or (
+            search.query_type == "people"
+            and criteria.get("_dataset_source") == "manual"
+            and criteria.get("_source_search_id") is not None
+        ),
         "enriched": bool((result.raw_data or {}).get("_research_enriched")),
         "apollo_id": result.apollo_id or (result.raw_data or {}).get("id"),
         "name": result.name,
@@ -741,84 +769,20 @@ def list_contacts_for_company_result(
     if not domain:
         return {"domain": None, "total": 0, "items": []}
 
-    related_results = _company_results_for_domain(
-        db, domain, apollo_id=_apollo_id_for_result(company_result)
+    from app.services.research_company_contacts import list_vault_contacts_for_company
+
+    items: list[dict[str, Any]] = list_vault_contacts_for_company(
+        db, parent_search=parent_search, company_result=company_result
     )
-    related_result_ids = [str(result.id) for result, _ in related_results]
-
-    people_search_clauses = [
-        ResearchSearch.criteria["_source_company_domain"].astext == domain,
-        ResearchSearch.criteria["_source_search_id"].astext == str(parent_search.id),
-    ]
-    if related_result_ids:
-        people_search_clauses.append(
-            ResearchSearch.criteria["_source_company_result_id"].astext.in_(related_result_ids)
-        )
-
-    people_search_rows = db.execute(
-        select(ResearchSearch).where(
-            ResearchSearch.query_type == "people",
-            or_(*people_search_clauses),
-        )
-    ).scalars().all()
-    people_search_by_id = {row.id: row for row in people_search_rows}
-    people_search_ids = list(people_search_by_id.keys())
-
-    items: list[dict[str, Any]] = []
     seen: set[str] = set()
-
-    if people_search_ids:
-        rows = (
-            db.execute(
-                select(ResearchResult, ResearchSearch)
-                .join(ResearchSearch, ResearchResult.search_id == ResearchSearch.id)
-                .where(
-                    ResearchResult.search_id.in_(people_search_ids),
-                    ResearchResult.entity_type == "person",
-                )
-                .order_by(ResearchResult.id.desc())
-            )
-            .all()
+    for item in items:
+        key = _dedupe_key(
+            apollo_id=item.get("apollo_id"),
+            email=item.get("email"),
+            name=item.get("name"),
         )
-        for result, search in rows:
-            person_raw = result.raw_data or {}
-            if not _person_belongs_to_company(
-                person_raw,
-                company_domain=domain,
-                company_result_id=company_result.id,
-                people_search=people_search_by_id.get(search.id, search),
-            ):
-                continue
-
-            fields = _flatten_person(person_raw)
-            apollo_id = result.apollo_id or fields.get("apollo_id")
-            name = fields.get("name") or result.name
-            email = fields.get("email")
-            key = _dedupe_key(apollo_id=apollo_id, email=email, name=name)
-            if key and key in seen:
-                continue
-            if key:
-                seen.add(key)
-
-            items.append(
-                {
-                    "source": "research",
-                    "id": result.id,
-                    "name": name,
-                    "title": fields.get("title"),
-                    "email": email,
-                    "phone": fields.get("phone"),
-                    "seniority": fields.get("seniority"),
-                    "linkedin_url": fields.get("linkedin_url"),
-                    "apollo_id": apollo_id,
-                    "enriched": is_enriched(result.raw_data),
-                    "enrichment_status": None,
-                    "contact_source": None,
-                    "research_search_id": search.id,
-                    "research_search_name": search.name,
-                    "company_id": None,
-                }
-            )
+        if key:
+            seen.add(key)
 
     for crm_company in find_by_domain(db, domain):
         crm_contacts = (

@@ -10,6 +10,7 @@ from app.models.contact import Contact
 from app.models.search_history import SearchHistory
 from app.models.enrichment_log import EnrichmentLog
 from app.models.research import ResearchSearch, ResearchResult
+from app.models.research_company_contact import ResearchCompanyContact
 
 __all__ = [
     "User",
@@ -25,4 +26,5 @@ __all__ = [
     "EnrichmentLog",
     "ResearchSearch",
     "ResearchResult",
+    "ResearchCompanyContact",
 ]

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "../api/client";
 import ApolloFilterForm from "../components/ApolloFilterForm";
 import { Icon } from "../components/icons";
-import { CompanyLogo, EmptyState, Field, IconLink, Modal, PageLoader, Pagination, Spinner, StatusBadge, normalizeExternalHref } from "../components/ui";
+import { CompanyLogo, ActionMenu, ActionMenuItem, EmptyState, Field, IconLink, Modal, PageLoader, Pagination, Spinner, StatusBadge, normalizeExternalHref } from "../components/ui";
 import {
   PEOPLE_CONTACT_FIELDS,
   buildCriteria,
@@ -111,6 +111,24 @@ export default function ResearchDetail() {
   const [childSearches, setChildSearches] = useState([]);
   const [loadingChildren, setLoadingChildren] = useState(false);
 
+  const [showContactDataset, setShowContactDataset] = useState(false);
+  const [contactDatasetName, setContactDatasetName] = useState("");
+  const [creatingContactDataset, setCreatingContactDataset] = useState(false);
+
+  const [companyOptions, setCompanyOptions] = useState([]);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [editingContactId, setEditingContactId] = useState(null);
+  const emptyContactForm = () => ({
+    name: "",
+    company_result_id: "",
+    title: "",
+    email: "",
+    phone: "",
+    linkedin_url: "",
+  });
+  const [contactForm, setContactForm] = useState(emptyContactForm);
+  const [savingContact, setSavingContact] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -171,7 +189,12 @@ export default function ResearchDetail() {
   };
 
   const remove = async () => {
-    if (!confirm(`Delete research "${data?.search?.name}"? This cannot be undone.`)) return;
+    const s = data?.search;
+    const isContactList = s?.query_type === "people" && s?.criteria?._source_search_id;
+    const msg = isContactList
+      ? `Delete contact recordset "${s?.name}"? Contacts remain linked to their companies — only this list is removed.`
+      : `Delete research "${s?.name}"? This cannot be undone.`;
+    if (!confirm(msg)) return;
     try {
       await api.delete(`/research/searches/${id}`);
       toast.success("Research deleted.");
@@ -392,21 +415,122 @@ export default function ResearchDetail() {
   };
 
   const removeResult = async (rowId) => {
-    if (!confirm("Remove this company from the dataset?")) return;
+    if (!confirm("Remove this record from the dataset? Contacts stay linked to the company.")) return;
     try {
       await api.delete(`/research/searches/${id}/results/${rowId}`);
-      toast.success("Company removed.");
+      toast.success("Record removed.");
       load();
     } catch (err) {
       toast.error(apiError(err));
     }
   };
 
+  const createContactDataset = async (e) => {
+    e?.preventDefault();
+    if (!contactDatasetName.trim()) {
+      toast.info("Give your contact recordset a name first.");
+      return;
+    }
+    setCreatingContactDataset(true);
+    try {
+      const { data } = await api.post(`/research/searches/${id}/contact-datasets`, {
+        name: contactDatasetName.trim(),
+      });
+      toast.success("Empty contact recordset created.");
+      setShowContactDataset(false);
+      setContactDatasetName("");
+      api.get(`/research/searches/${id}/children`).then((res) => setChildSearches(res.data.items || []));
+      navigate(`/research/${data.id}`);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setCreatingContactDataset(false);
+    }
+  };
+
+  const loadCompanyOptions = async (parentSearchId) => {
+    try {
+      const { data } = await api.get(`/research/searches/${parentSearchId}/company-options`);
+      setCompanyOptions(data.items || []);
+    } catch {
+      setCompanyOptions([]);
+    }
+  };
+
+  const openAddContact = () => {
+    setEditingContactId(null);
+    setContactForm(emptyContactForm());
+    if (sourceSearchId) loadCompanyOptions(sourceSearchId);
+    setShowAddContact(true);
+  };
+
+  const openEditContact = (row) => {
+    setEditingContactId(row.id);
+    setContactForm({
+      name: row.name || "",
+      company_result_id: String(row.raw_data?._source_company_result_id || row.company_result_id || ""),
+      title: row.title || "",
+      email: row.email || "",
+      phone: row.phone || "",
+      linkedin_url: row.linkedin_url || "",
+    });
+    if (sourceSearchId) loadCompanyOptions(sourceSearchId);
+    setShowAddContact(true);
+  };
+
+  const closeContactModal = () => {
+    if (savingContact) return;
+    setShowAddContact(false);
+    setEditingContactId(null);
+    setContactForm(emptyContactForm());
+  };
+
+  const saveContact = async (e) => {
+    e?.preventDefault();
+    if (!contactForm.name.trim()) {
+      toast.info("Contact name is required.");
+      return;
+    }
+    if (!contactForm.company_result_id) {
+      toast.info("Select a company from the recordset.");
+      return;
+    }
+    setSavingContact(true);
+    try {
+      const payload = {
+        name: contactForm.name.trim(),
+        company_result_id: Number(contactForm.company_result_id),
+        title: contactForm.title || null,
+        email: contactForm.email || null,
+        phone: contactForm.phone || null,
+        linkedin_url: contactForm.linkedin_url || null,
+      };
+      if (editingContactId) {
+        await api.patch(`/research/searches/${id}/contacts/${editingContactId}`, payload);
+        toast.success("Contact updated.");
+      } else {
+        await api.post(`/research/searches/${id}/contacts`, payload);
+        toast.success("Contact added.");
+        setPage(1);
+      }
+      setShowAddContact(false);
+      setEditingContactId(null);
+      setContactForm(emptyContactForm());
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setSavingContact(false);
+    }
+  };
+
   const search = data?.search;
   const isOrg = search?.query_type === "organizations";
   const isManualDataset = search?.criteria?._dataset_source === "manual";
-  const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchId = search?.criteria?._source_search_id;
+  const isManualContactDataset = !isOrg && isManualDataset && !!sourceSearchId;
+  const isManualCompanyDataset = isOrg && isManualDataset;
+  const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchName = search?.criteria?._source_search_name;
   const sourceCompanyResultId = search?.criteria?._source_company_result_id;
   const sourceCompanyName = search?.criteria?._source_company_name;
@@ -421,13 +545,19 @@ export default function ResearchDetail() {
           </Link>
           <h1 className="text-xl font-semibold text-ink-900">{search?.name || "Research"}</h1>
           <p className="text-sm text-ink-500">
-            {isManualDataset ? "Manual company list" : isOrg ? "Companies" : "People"} · {search?.result_count ?? 0}{" "}
-            records captured
+            {isManualContactDataset
+              ? "Manual contact list"
+              : isManualCompanyDataset
+                ? "Manual company list"
+                : isOrg
+                  ? "Companies"
+                  : "People"}{" "}
+            · {search?.result_count ?? 0} records captured
             {search?.total_available ? ` of ${search.total_available} available` : ""}
           </p>
           {sourceSearchId ? (
             <p className="mt-1 text-sm text-ink-500">
-              Contact search from recordset{" "}
+              {isManualContactDataset ? "Contact list from recordset" : "Contact search from recordset"}{" "}
               <Link to={`/research/${sourceSearchId}`} className="font-medium text-brand-600 hover:underline">
                 {sourceSearchName || `#${sourceSearchId}`}
               </Link>
@@ -450,7 +580,7 @@ export default function ResearchDetail() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isManualDataset && (
+          {isManualCompanyDataset && (
             <>
               <button className="btn-secondary" onClick={openAddCompany}>
                 <Icon.Plus width={18} height={18} /> Add company
@@ -472,25 +602,63 @@ export default function ResearchDetail() {
             </>
           )}
           {isOrg && (
-            <button className="btn-primary" onClick={openContactsModal} title="Find contacts at these companies">
-              <Icon.Users width={18} height={18} /> Find contacts
+            <button className="btn-secondary" onClick={() => setShowContactDataset(true)}>
+              <Icon.Plus width={18} height={18} /> New contact list
             </button>
           )}
-          <button
-            className="btn-secondary"
-            onClick={enrichAllUnenriched}
-            disabled={enriching || !apolloReady}
-            title={apolloReady ? undefined : "Enable Apollo in Settings to enrich."}
+          {isManualContactDataset && (
+            <button className="btn-primary" onClick={openAddContact}>
+              <Icon.Plus width={18} height={18} /> Add contact
+            </button>
+          )}
+          {isOrg ? (
+            <ActionMenu
+              trigger={
+                <>
+                  <Icon.Sparkles width={18} height={18} />
+                  AI
+                  <Icon.ChevronDown width={14} height={14} className="opacity-60" />
+                </>
+              }
+            >
+              <ActionMenuItem icon={<Icon.Users width={16} height={16} />} onClick={openContactsModal}>
+                Find contacts
+              </ActionMenuItem>
+              <ActionMenuItem
+                icon={enriching ? <Spinner className="h-4 w-4" /> : <Icon.Bolt width={16} height={16} />}
+                disabled={enriching || !apolloReady}
+                onClick={enrichAllUnenriched}
+              >
+                Enrich all
+              </ActionMenuItem>
+            </ActionMenu>
+          ) : (
+            <button
+              className="btn-secondary"
+              onClick={enrichAllUnenriched}
+              disabled={enriching || !apolloReady}
+              title={apolloReady ? undefined : "Enable Apollo in Settings to enrich."}
+            >
+              {enriching ? <Spinner className="h-4 w-4" /> : <Icon.Bolt width={18} height={18} />}
+              Enrich all
+            </button>
+          )}
+          <ActionMenu
+            trigger={
+              <>
+                <Icon.Download width={18} height={18} />
+                Export
+                <Icon.ChevronDown width={14} height={14} className="opacity-60" />
+              </>
+            }
           >
-            {enriching ? <Spinner className="h-4 w-4" /> : <Icon.Bolt width={18} height={18} />}
-            Enrich all
-          </button>
-          <button className="btn-secondary" onClick={() => exportSearch("csv")}>
-            <Icon.Download width={18} height={18} /> CSV
-          </button>
-          <button className="btn-secondary" onClick={() => exportSearch("xlsx")}>
-            <Icon.Download width={18} height={18} /> Excel
-          </button>
+            <ActionMenuItem icon={<Icon.Download width={16} height={16} />} onClick={() => exportSearch("csv")}>
+              CSV
+            </ActionMenuItem>
+            <ActionMenuItem icon={<Icon.Download width={16} height={16} />} onClick={() => exportSearch("xlsx")}>
+              Excel
+            </ActionMenuItem>
+          </ActionMenu>
           <button className="btn-secondary text-red-600 hover:border-red-200 hover:bg-red-50" onClick={remove}>
             <Icon.Trash width={18} height={18} /> Delete
           </button>
@@ -518,12 +686,18 @@ export default function ResearchDetail() {
           <EmptyState
             title="No records yet"
             description={
-              isManualDataset
-                ? "Add companies manually or import a CSV/Excel file to get started."
-                : "This research dataset is empty."
+              isManualContactDataset
+                ? "Add contacts manually and link each one to a company from the parent recordset."
+                : isManualCompanyDataset
+                  ? "Add companies manually or import a CSV/Excel file to get started."
+                  : "This research dataset is empty."
             }
             action={
-              isManualDataset ? (
+              isManualContactDataset ? (
+                <button className="btn-primary" onClick={openAddContact}>
+                  <Icon.Plus width={18} height={18} /> Add contact
+                </button>
+              ) : isManualCompanyDataset ? (
                 <div className="flex flex-wrap justify-center gap-2">
                   <button className="btn-primary" onClick={openAddCompany}>
                     <Icon.Plus width={18} height={18} /> Add company
@@ -592,7 +766,7 @@ export default function ResearchDetail() {
                               )}
                             </button>
                           )}
-                          {isManualDataset && (
+                          {isManualCompanyDataset && (
                             <button
                               className="btn-ghost px-2 py-1 text-sm"
                               onClick={() => openEditCompany(row)}
@@ -601,7 +775,16 @@ export default function ResearchDetail() {
                               <Icon.Edit width={15} height={15} />
                             </button>
                           )}
-                          {isManualDataset && (
+                          {isManualContactDataset && (
+                            <button
+                              className="btn-ghost px-2 py-1 text-sm"
+                              onClick={() => openEditContact(row)}
+                              title="Edit contact"
+                            >
+                              <Icon.Edit width={15} height={15} />
+                            </button>
+                          )}
+                          {(isManualCompanyDataset || isManualContactDataset) && (
                             <button
                               className="btn-ghost px-2 py-1 text-red-500"
                               onClick={() => removeResult(row.id)}
@@ -624,15 +807,28 @@ export default function ResearchDetail() {
         )}
       </div>
 
-      {isOrg && (loadingChildren || childSearches.length > 0) ? (
+      {isOrg ? (
         <div className="card">
-          <div className="border-b border-ink-100 px-5 py-4">
-            <h2 className="text-sm font-semibold text-ink-900">Contact recordsets</h2>
-            <p className="mt-0.5 text-xs text-ink-500">People searches started from this company recordset.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-100 px-5 py-4">
+            <div>
+              <h2 className="text-sm font-semibold text-ink-900">Contact recordsets</h2>
+              <p className="mt-0.5 text-xs text-ink-500">
+                Named contact lists linked to this company recordset. Deleting a list does not remove contacts from
+                companies.
+              </p>
+            </div>
+            <button className="btn-secondary text-sm" onClick={() => setShowContactDataset(true)}>
+              <Icon.Plus width={16} height={16} /> New contact list
+            </button>
           </div>
           {loadingChildren ? (
             <div className="flex justify-center py-8">
               <Spinner className="h-5 w-5" />
+            </div>
+          ) : childSearches.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-ink-500">
+              No contact lists yet. Create an empty list to add contacts manually, or use Find contacts for an Apollo
+              search.
             </div>
           ) : (
             <div className="divide-y divide-ink-100">
@@ -644,6 +840,7 @@ export default function ResearchDetail() {
                     </Link>
                     <p className="text-xs text-ink-500">
                       {child.result_count} contacts · {new Date(child.created_at).toLocaleString()}
+                      {child.criteria?._dataset_source === "manual" ? " · Manual" : ""}
                     </p>
                   </div>
                   <Link to={`/research/${child.id}`} className="btn-secondary text-sm">
@@ -783,6 +980,117 @@ export default function ResearchDetail() {
               className="input"
               value={companyForm.linkedin_url}
               onChange={(e) => setCompanyForm({ ...companyForm, linkedin_url: e.target.value })}
+            />
+          </Field>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showContactDataset}
+        onClose={() => !creatingContactDataset && setShowContactDataset(false)}
+        title="New contact list"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowContactDataset(false)} disabled={creatingContactDataset}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={createContactDataset} disabled={creatingContactDataset}>
+              {creatingContactDataset ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Plus width={18} height={18} />}
+              Create list
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={createContactDataset} className="space-y-4">
+          <p className="text-sm text-ink-600">
+            Create an empty contact recordset linked to this company list. Add contacts manually without running a new
+            Apollo search each time.
+          </p>
+          <Field label="Contact list name *" hint="Shown under this company recordset in Market Research.">
+            <input
+              className="input"
+              required
+              placeholder="e.g. Decision makers — manual"
+              value={contactDatasetName}
+              onChange={(e) => setContactDatasetName(e.target.value)}
+            />
+          </Field>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showAddContact}
+        onClose={closeContactModal}
+        title={editingContactId ? "Edit contact" : "Add contact"}
+        footer={
+          <>
+            <button className="btn-secondary" onClick={closeContactModal} disabled={savingContact}>
+              Cancel
+            </button>
+            <button className="btn-primary" onClick={saveContact} disabled={savingContact}>
+              {savingContact ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : null}
+              {editingContactId ? "Save changes" : "Add contact"}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={saveContact} className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <Field label="Company from recordset *">
+              <select
+                className="input"
+                required
+                value={contactForm.company_result_id}
+                onChange={(e) => setContactForm({ ...contactForm, company_result_id: e.target.value })}
+              >
+                <option value="">Select company…</option>
+                {companyOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name}
+                    {opt.domain ? ` (${opt.domain})` : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="col-span-2">
+            <Field label="Name *">
+              <input
+                className="input"
+                required
+                value={contactForm.name}
+                onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Title">
+            <input
+              className="input"
+              value={contactForm.title}
+              onChange={(e) => setContactForm({ ...contactForm, title: e.target.value })}
+            />
+          </Field>
+          <Field label="Email">
+            <input
+              className="input"
+              type="email"
+              value={contactForm.email}
+              onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
+            />
+          </Field>
+          <Field label="Phone">
+            <input
+              className="input"
+              value={contactForm.phone}
+              onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
+            />
+          </Field>
+          <Field label="LinkedIn">
+            <input
+              className="input"
+              placeholder="https://linkedin.com/in/…"
+              value={contactForm.linkedin_url}
+              onChange={(e) => setContactForm({ ...contactForm, linkedin_url: e.target.value })}
             />
           </Field>
         </form>
