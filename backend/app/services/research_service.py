@@ -192,6 +192,36 @@ def _collect_from_apollo(
     return collected, total_available
 
 
+def _organization_sort_key(raw: dict[str, Any], sort_by: str) -> int:
+    if sort_by == "revenue_desc":
+        value = raw.get("annual_revenue") or raw.get("organization_revenue")
+    else:
+        value = raw.get("estimated_num_employees") or raw.get("organization_num_employees")
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sort_and_trim_collected(
+    collected: list[dict[str, Any]],
+    *,
+    query_type: str,
+    sort_by: str | None,
+    max_records: int,
+) -> list[dict[str, Any]]:
+    if not sort_by or query_type != "organizations" or not collected:
+        return collected[:max_records]
+    if sort_by not in ("employee_count_desc", "revenue_desc"):
+        return collected[:max_records]
+    ordered = sorted(
+        collected,
+        key=lambda raw: _organization_sort_key(raw, sort_by),
+        reverse=True,
+    )
+    return ordered[:max_records]
+
+
 def _persist_search(
     db: Session,
     *,
@@ -526,22 +556,41 @@ def run_and_store(
     criteria: dict[str, Any],
     max_records: int,
     created_by: int | None,
+    sort_by: str | None = None,
 ) -> ResearchSearch:
     """Run a paginated Apollo search and persist the snapshot."""
     if query_type not in ("organizations", "people"):
         raise ApolloError("Unknown search type.", status_code=400)
 
+    max_records = max(1, min(max_records, MAX_RECORDS_CAP))
+    fetch_limit = max_records
+    if sort_by and query_type == "organizations":
+        fetch_limit = min(MAX_RECORDS_CAP, max(max_records * 10, max_records + 50))
+
     collected, total_available = _collect_from_apollo(
         client,
         query_type=query_type,
         criteria=criteria,
+        max_records=fetch_limit,
+    )
+    collected = _sort_and_trim_collected(
+        collected,
+        query_type=query_type,
+        sort_by=sort_by,
         max_records=max_records,
     )
+
+    stored_criteria = dict(criteria)
+    if sort_by:
+        stored_criteria["_research_sort_by"] = sort_by
+    if (criteria or {}).get("_nl_prompt"):
+        stored_criteria["_nl_prompt"] = criteria["_nl_prompt"]
+
     return _persist_search(
         db,
         name=name,
         query_type=query_type,
-        criteria=criteria,
+        criteria=stored_criteria,
         collected=collected,
         total_available=total_available,
         created_by=created_by,

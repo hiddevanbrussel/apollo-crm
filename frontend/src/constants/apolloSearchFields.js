@@ -269,6 +269,24 @@ export function buildCriteria(filters, fields) {
   return out;
 }
 
+export function criteriaToFilters(criteria, fields) {
+  const out = emptyFilters(fields);
+  for (const field of fields) {
+    const value = criteria?.[field.key];
+    if (value === undefined || value === null || value === "") continue;
+    if (field.type === "list" && Array.isArray(value)) {
+      out[field.key] = value.join(", ");
+    } else if (field.type === "ranges" && Array.isArray(value)) {
+      out[field.key] = value.join(" · ");
+    } else if (field.type === "boolean") {
+      out[field.key] = value ? "true" : "false";
+    } else {
+      out[field.key] = String(value);
+    }
+  }
+  return out;
+}
+
 export function slug(name) {
   return (name || "research").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "research";
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import api, { apiError, notifyApiError } from "../api/client";
@@ -9,8 +9,8 @@ import { useToast } from "../context/ToastContext";
 
 const SUGGESTIONS = [
   "How many companies do we have, and how many are enriched?",
-  "Top 5 industries by number of companies",
-  "Which companies are missing a domain?",
+  "Top 20 grootste energiemaatschappijen in Nederland - maak een recordset",
+  "Zoek 50 fintech bedrijven in Belgie met 50+ medewerkers",
   "Contacts with a verified email",
 ];
 
@@ -95,8 +95,80 @@ function ResultTable({ columns, rows }) {
   );
 }
 
-function AssistantMessage({ msg }) {
+function ResearchPlanCard({ plan, creating, setCreating }) {
+  const navigate = useNavigate();
+  const toast = useToast();
+
+  const review = () => {
+    navigate("/research", {
+      state: {
+        mode: plan.query_type === "people" ? "people" : "organizations",
+        name: plan.name,
+        prefilled: plan.criteria,
+        maxRecords: plan.max_records,
+      },
+    });
+  };
+
+  const create = async () => {
+    const creditNote = plan.uses_apollo_credits
+      ? "Company searches use Apollo credits."
+      : "People search does not consume Apollo credits.";
+    if (!confirm(`Recordset "${plan.name}" aanmaken met max ${plan.max_records} records? ${creditNote}`)) return;
+
+    setCreating(true);
+    try {
+      const { data } = await api.post("/ai/research/create", {
+        name: plan.name,
+        query_type: plan.query_type,
+        criteria: plan.criteria,
+        max_records: plan.max_records,
+        sort_by: plan.sort_by,
+      });
+      toast.success(`Recordset aangemaakt met ${data.result_count} records.`);
+      navigate(`/research/${data.id}`);
+    } catch (err) {
+      notifyApiError(toast, err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/40 p-3 text-xs">
+      <p className="font-semibold text-ink-900">{plan.name}</p>
+      <p className="mt-1 text-ink-600">
+        {plan.query_type === "people" ? "People" : "Companies"} · max {plan.max_records} records
+        {plan.sort_by === "employee_count_desc" ? " · gesorteerd op medewerkers" : null}
+        {plan.sort_by === "revenue_desc" ? " · gesorteerd op omzet" : null}
+      </p>
+      {plan.filter_preview?.length ? (
+        <ul className="mt-2 space-y-1 text-ink-600">
+          {plan.filter_preview.map((f) => (
+            <li key={f.key}>
+              <span className="text-ink-400">{f.label}:</span> {f.value}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="btn-primary px-2.5 py-1 text-xs" onClick={create} disabled={creating}>
+          {creating ? <Spinner className="h-3.5 w-3.5 border-white/40 border-t-white" /> : <Icon.Sparkles width={14} height={14} />}
+          Maak recordset
+        </button>
+        <button type="button" className="btn-secondary px-2.5 py-1 text-xs" onClick={review} disabled={creating}>
+          Bekijk filters
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AssistantMessage({ msg, creatingPlanId, setCreatingPlanId }) {
   const [showData, setShowData] = useState(false);
+  const planKey = msg.research_plan ? `${msg.research_plan.name}-${msg.research_plan.max_records}` : null;
+  const creating = creatingPlanId === planKey;
+
   return (
     <div className="flex gap-2.5">
       <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent-400 to-accent-600 text-white">
@@ -106,6 +178,13 @@ function AssistantMessage({ msg }) {
         <div className="rounded-2xl rounded-tl-sm bg-ink-50 px-3.5 py-2.5 text-sm leading-relaxed text-ink-800">
           <Markdown>{msg.content}</Markdown>
         </div>
+        {msg.research_plan ? (
+          <ResearchPlanCard
+            plan={msg.research_plan}
+            creating={creating}
+            setCreating={(v) => setCreatingPlanId(v ? planKey : null)}
+          />
+        ) : null}
         {(msg.sql || msg.row_count > 0) && (
           <div className="mt-1.5">
             <button
@@ -135,6 +214,7 @@ export default function AiChat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [creatingPlanId, setCreatingPlanId] = useState(null);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -167,6 +247,7 @@ export default function AiChat() {
           columns: data.columns,
           rows: data.rows,
           row_count: data.row_count,
+          research_plan: data.research_plan,
         },
       ]);
     } catch (err) {
@@ -202,7 +283,9 @@ export default function AiChat() {
             <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
               <Icon.Chat width={18} height={18} />
             </div>
-            <p className="text-xs text-ink-500">Ask anything about your CRM data. Try one of these:</p>
+            <p className="text-xs text-ink-500">
+              Vraag iets over je CRM-data, of laat een Market Research recordset plannen (bijv. top 20 energiebedrijven).
+            </p>
             <div className="mt-3 flex flex-wrap justify-center gap-2">
               {SUGGESTIONS.map((s) => (
                 <button
@@ -226,7 +309,7 @@ export default function AiChat() {
               </div>
             </div>
           ) : (
-            <AssistantMessage key={i} msg={msg} />
+            <AssistantMessage key={i} msg={msg} creatingPlanId={creatingPlanId} setCreatingPlanId={setCreatingPlanId} />
           )
         )}
 
@@ -246,7 +329,7 @@ export default function AiChat() {
         <textarea
           className="input min-h-[42px] flex-1 resize-none"
           rows={1}
-          placeholder={ready ? "Ask about your data…" : "Enable Groq in Settings to chat"}
+          placeholder={ready ? "Vraag over CRM-data of beschrijf een recordset..." : "Enable Groq in Settings to chat"}
           value={input}
           disabled={!ready || loading}
           onChange={(e) => setInput(e.target.value)}

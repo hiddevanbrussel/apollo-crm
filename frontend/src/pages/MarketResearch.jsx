@@ -8,6 +8,7 @@ import {
   ORG_FILTER_FIELDS,
   PEOPLE_FILTER_FIELDS,
   buildCriteria,
+  criteriaToFilters,
   emptyFilters,
   slug,
 } from "../constants/apolloSearchFields";
@@ -145,6 +146,9 @@ export default function MarketResearch() {
   const [loadingList, setLoadingList] = useState(true);
   const [datasetName, setDatasetName] = useState("");
   const [creatingDataset, setCreatingDataset] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiPlanning, setAiPlanning] = useState(false);
+  const [aiPlanSummary, setAiPlanSummary] = useState("");
 
   const disabled = !status?.enabled || !status?.configured;
   const activeFields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
@@ -162,12 +166,15 @@ export default function MarketResearch() {
     if (state.mode) setMode(state.mode);
     if (state.name) setName(state.name);
     if (state.prefilled) {
+      const fields = state.mode === "people" ? PEOPLE_FILTER_FIELDS : ORG_FILTER_FIELDS;
+      const mapped = criteriaToFilters(state.prefilled, fields);
       if (state.mode === "people") {
-        setPeopleFilters((prev) => ({ ...prev, ...state.prefilled }));
+        setPeopleFilters(mapped);
       } else {
-        setOrgFilters((prev) => ({ ...prev, ...state.prefilled }));
+        setOrgFilters(mapped);
       }
     }
+    if (state.maxRecords) setMaxRecords(Number(state.maxRecords) || 500);
     setDrawer("apollo");
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate]);
@@ -194,6 +201,33 @@ export default function MarketResearch() {
       setOrgFilters((prev) => ({ ...prev, [key]: value }));
     } else {
       setPeopleFilters((prev) => ({ ...prev, [key]: value }));
+    }
+  };
+
+  const planWithAi = async () => {
+    if (!aiPrompt.trim()) {
+      toast.info("Beschrijf eerst wat je wilt onderzoeken.");
+      return;
+    }
+    setAiPlanning(true);
+    setAiPlanSummary("");
+    try {
+      const { data } = await api.post("/ai/research/plan", { prompt: aiPrompt.trim() });
+      setName(data.name);
+      setMode(data.query_type === "people" ? "people" : "organizations");
+      setMaxRecords(data.max_records);
+      const fields = data.query_type === "people" ? PEOPLE_FILTER_FIELDS : ORG_FILTER_FIELDS;
+      if (data.query_type === "people") {
+        setPeopleFilters(criteriaToFilters(data.criteria, fields));
+      } else {
+        setOrgFilters(criteriaToFilters(data.criteria, fields));
+      }
+      setAiPlanSummary(data.summary);
+      toast.success("Zoekplan klaar — controleer de filters en klik Run & save.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setAiPlanning(false);
     }
   };
 
@@ -387,6 +421,27 @@ export default function MarketResearch() {
               to enable it.
             </div>
           )}
+
+          <div className="rounded-lg border border-brand-200 bg-brand-50/40 p-4">
+            <p className="mb-2 text-sm font-medium text-ink-800">
+              <Icon.Sparkles width={16} height={16} className="mr-1 inline text-brand-600" />
+              Beschrijf in gewone taal
+            </p>
+            <textarea
+              className="input min-h-[72px] w-full resize-y text-sm"
+              placeholder="Bijv.: top 20 grootste energiemaatschappijen in Nederland"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              disabled={disabled || aiPlanning}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button type="button" className="btn-secondary text-sm" onClick={planWithAi} disabled={disabled || aiPlanning || !aiPrompt.trim()}>
+                {aiPlanning ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={16} height={16} />}
+                Plan met AI
+              </button>
+            </div>
+            {aiPlanSummary ? <p className="mt-2 text-xs text-ink-600">{aiPlanSummary}</p> : null}
+          </div>
 
           <div className="rounded-lg border border-ink-200 bg-ink-50/50 px-4 py-3 text-sm text-ink-600">
             <Icon.Sparkles width={16} height={16} className="mb-1 inline text-brand-500" /> Company search uses credits;

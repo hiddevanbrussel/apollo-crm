@@ -172,10 +172,48 @@ def _plan_sql(client: GroqService, question: str) -> dict[str, Any]:
 
 
 def ask(client: GroqService, question: str) -> dict[str, Any]:
-    """Full agent loop: plan a query, run it, summarise the rows."""
+    """Full agent loop: CRM Q&A or Market Research planning."""
     question = (question or "").strip()
     if not question:
         raise AgentError("Please ask a question.")
+
+    from app.services.research_nl_service import ResearchNlError, classify_intent, plan_research
+
+    try:
+        intent = classify_intent(client, question)
+    except GroqError as exc:
+        raise AgentError(exc.message, status_code=exc.status_code or 502) from exc
+
+    if intent == "research":
+        try:
+            plan = plan_research(client, question)
+        except ResearchNlError as exc:
+            raise AgentError(exc.message, status_code=exc.status_code or 400) from exc
+        except GroqError as exc:
+            raise AgentError(exc.message, status_code=exc.status_code or 502) from exc
+
+        sort_note = ""
+        if plan.get("sort_by") == "employee_count_desc":
+            sort_note = " Results worden gesorteerd op aantal medewerkers (grootste eerst)."
+        elif plan.get("sort_by") == "revenue_desc":
+            sort_note = " Results worden gesorteerd op omzet (hoogste eerst)."
+
+        credit_note = (
+            " Deze zoekactie verbruikt Apollo credits."
+            if plan.get("uses_apollo_credits")
+            else " People search verbruikt geen Apollo credits."
+        )
+
+        return {
+            "answer": f"{plan['summary']}{sort_note}{credit_note}\n\nBevestig hieronder om de recordset aan te maken.",
+            "sql": None,
+            "columns": [],
+            "rows": [],
+            "row_count": 0,
+            "used_data": False,
+            "intent": "research",
+            "research_plan": plan,
+        }
 
     try:
         plan = _plan_sql(client, question)
@@ -226,4 +264,6 @@ def ask(client: GroqService, question: str) -> dict[str, Any]:
         "rows": rows,
         "row_count": len(rows),
         "used_data": bool(sql),
+        "intent": "crm",
+        "research_plan": None,
     }
