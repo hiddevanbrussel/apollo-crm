@@ -125,9 +125,35 @@ class ProspeoSettingsUpdate(BaseModel):
     clear_api_key: bool = False
 
 
+class LushaTestResult(BaseModel):
+    success: bool
+    message: str
+    status_code: int | None = None
+
+
+class LushaSettingsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    base_url: str
+    enabled: bool
+    configured: bool = False
+    api_key_masked: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LushaSettingsUpdate(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+    enabled: bool | None = None
+    clear_api_key: bool = False
+
+
 class IntegrationsStatusOut(BaseModel):
     apollo: IntegrationServiceStatus
     groq: IntegrationServiceStatus
     logokit: IntegrationServiceStatus
     prospeo: IntegrationServiceStatus
+    lusha: IntegrationServiceStatus
     azure_ad: IntegrationServiceStatus

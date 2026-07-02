@@ -49,9 +49,11 @@ export default function ContactDetail() {
   const [contact, setContact] = useState(null);
   const [enriching, setEnriching] = useState(false);
   const [enrichingProspeo, setEnrichingProspeo] = useState(false);
+  const [enrichingLusha, setEnrichingLusha] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
   const [prospeoReady, setProspeoReady] = useState(false);
+  const [lushaReady, setLushaReady] = useState(false);
   const [groqReady, setGroqReady] = useState(false);
   const [normalizingTitle, setNormalizingTitle] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -65,11 +67,13 @@ export default function ContactDetail() {
       .then((res) => {
         setApolloReady(res.data.apollo?.enabled && res.data.apollo?.configured);
         setProspeoReady(res.data.prospeo?.enabled && res.data.prospeo?.configured);
+        setLushaReady(res.data.lusha?.enabled && res.data.lusha?.configured);
         setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
       })
       .catch(() => {
         setApolloReady(false);
         setProspeoReady(false);
+        setLushaReady(false);
       });
   }, []);
 
@@ -94,7 +98,8 @@ export default function ContactDetail() {
     try {
       const { data } = await api.post(`/contacts/${id}/enrich`);
       setContact(data);
-      const provider = data.source === "prospeo" ? "Prospeo" : "Apollo";
+      const provider =
+        data.source === "prospeo" ? "Prospeo" : data.source === "lusha" ? "Lusha" : "Apollo";
       toast.success(
         data.enrichment_status === "pending"
           ? "Contact matched. Waterfall email enrichment is in progress — results arrive in a few minutes."
@@ -117,6 +122,19 @@ export default function ContactDetail() {
       toast.error(apiError(err));
     } finally {
       setEnrichingProspeo(false);
+    }
+  };
+
+  const enrichLusha = async () => {
+    setEnrichingLusha(true);
+    try {
+      const { data } = await api.post(`/contacts/${id}/enrich-lusha`);
+      setContact(data);
+      toast.success(data.phone ? "Phone number revealed via Lusha." : "Contact enriched via Lusha.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setEnrichingLusha(false);
     }
   };
 
@@ -199,11 +217,12 @@ export default function ContactDetail() {
   const canMatch =
     Boolean(contact.apollo_id) ||
     Boolean(contact.prospeo_id) ||
+    Boolean(contact.lusha_id) ||
     Boolean(contact.email?.trim()) ||
     Boolean(contact.linkedin_url?.trim()) ||
     Boolean(contact.full_name?.trim()) ||
     Boolean(contact.first_name?.trim() && contact.last_name?.trim());
-  const enrichReady = apolloReady || prospeoReady;
+  const enrichReady = apolloReady || prospeoReady || lushaReady;
   const employment = Array.isArray(contact.apollo_data?.employment_history)
     ? contact.apollo_data.employment_history
     : [];
@@ -275,6 +294,23 @@ export default function ContactDetail() {
           {isAdmin && (
           <button
             className="btn-secondary"
+            onClick={enrichLusha}
+            disabled={enrichingLusha || !lushaReady || !canMatch}
+            title={
+              !lushaReady
+                ? "Lusha is off — enable it in Settings"
+                : !canMatch
+                  ? "Add an email, name + company, or LinkedIn URL to enrich via Lusha"
+                  : "Reveal phone number via Lusha search-and-enrich"
+            }
+          >
+            {enrichingLusha ? <Spinner className="h-4 w-4" /> : <Icon.Phone width={18} height={18} />}
+            Reveal phone (Lusha)
+          </button>
+          )}
+          {isAdmin && (
+          <button
+            className="btn-secondary"
             onClick={normalizeTitle}
             disabled={normalizingTitle || !groqReady || !contact.title?.trim()}
             title={
@@ -296,10 +332,10 @@ export default function ContactDetail() {
             disabled={enriching || !enrichReady || !canMatch}
             title={
               !enrichReady
-                ? "Enable Apollo or Prospeo in Settings"
+                ? "Enable Apollo, Prospeo, or Lusha in Settings"
                 : !canMatch
                   ? "Add an email, name, or LinkedIn URL to match"
-                  : "Try Apollo first, then Prospeo if no match is found"
+                  : "Try Apollo, then Prospeo; Lusha fills in phone numbers when missing"
             }
           >
             {enriching ? <Spinner className="h-4 w-4 border-white/40 border-t-white" /> : <Icon.Sparkles width={18} height={18} />}
@@ -325,6 +361,7 @@ export default function ContactDetail() {
             <Detail label="Country" value={contact.country} />
             <Detail label="Apollo ID" value={contact.apollo_id} />
             <Detail label="Prospeo ID" value={contact.prospeo_id} />
+            <Detail label="Lusha ID" value={contact.lusha_id} />
             <div className="sm:col-span-2">
               <Detail label="Headline" value={contact.headline} />
             </div>
@@ -392,6 +429,23 @@ export default function ContactDetail() {
               <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-ink-900 p-4 text-xs text-ink-100">
 {JSON.stringify(
   Object.fromEntries(Object.entries(contact.prospeo_data).filter(([key]) => key !== "raw")),
+  null,
+  2,
+)}
+              </pre>
+            </details>
+          )}
+          {contact.lusha_data && Object.keys(contact.lusha_data).length > 0 && (
+            <details className="mt-4">
+              <summary className="cursor-pointer text-xs font-medium text-brand-600">Lusha raw data</summary>
+              {contact.lusha_data.raw && (
+                <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-ink-900 p-3 text-[11px] text-ink-100">
+{JSON.stringify(contact.lusha_data.raw, null, 2)}
+                </pre>
+              )}
+              <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-ink-900 p-3 text-[11px] text-ink-100">
+{JSON.stringify(
+  Object.fromEntries(Object.entries(contact.lusha_data).filter(([key]) => key !== "raw")),
   null,
   2,
 )}

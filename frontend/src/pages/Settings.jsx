@@ -107,6 +107,14 @@ export default function Settings() {
   const [prospeoTesting, setProspeoTesting] = useState(false);
   const [prospeoTest, setProspeoTest] = useState(null);
 
+  // Lusha state
+  const [lusha, setLusha] = useState(null);
+  const [lushaKey, setLushaKey] = useState("");
+  const [lushaUrl, setLushaUrl] = useState("");
+  const [lushaSaving, setLushaSaving] = useState(false);
+  const [lushaTesting, setLushaTesting] = useState(false);
+  const [lushaTest, setLushaTest] = useState(null);
+
   // Azure AD state
   const [azureAd, setAzureAd] = useState(null);
   const [azureClientId, setAzureClientId] = useState("");
@@ -118,11 +126,12 @@ export default function Settings() {
 
   const load = async () => {
     try {
-      const [{ data: a }, { data: g }, { data: l }, { data: p }, { data: az }] = await Promise.all([
+      const [{ data: a }, { data: g }, { data: l }, { data: p }, { data: lu }, { data: az }] = await Promise.all([
         api.get("/settings/apollo"),
         api.get("/settings/groq"),
         api.get("/settings/logokit"),
         api.get("/settings/prospeo"),
+        api.get("/settings/lusha"),
         api.get("/settings/azure-ad"),
       ]);
       setApollo(a);
@@ -134,6 +143,8 @@ export default function Settings() {
       setLogokitUrl(l.base_url);
       setProspeo(p);
       setProspeoUrl(p.base_url);
+      setLusha(lu);
+      setLushaUrl(lu.base_url);
       setAzureAd(az);
       setAzureClientId(az.client_id || "");
       setAzureAuthority(az.authority || "");
@@ -483,6 +494,57 @@ export default function Settings() {
     }
   };
 
+  const toggleLusha = async (value) => {
+    try {
+      const { data } = await api.put("/settings/lusha", { enabled: value });
+      setLusha(data);
+      toast.success(`Lusha ${value ? "enabled" : "disabled"}.`);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const saveLusha = async () => {
+    setLushaSaving(true);
+    try {
+      const payload = { base_url: lushaUrl };
+      if (lushaKey.trim()) payload.api_key = lushaKey.trim();
+      const { data } = await api.put("/settings/lusha", payload);
+      setLusha(data);
+      setLushaKey("");
+      toast.success("Lusha settings saved.");
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setLushaSaving(false);
+    }
+  };
+
+  const clearLushaKey = async () => {
+    if (!confirm("Remove the Lusha API key?")) return;
+    try {
+      const { data } = await api.put("/settings/lusha", { clear_api_key: true });
+      setLusha(data);
+      toast.success("Lusha API key removed.");
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const testLusha = async () => {
+    setLushaTesting(true);
+    setLushaTest(null);
+    try {
+      const { data } = await api.post("/settings/lusha/test");
+      setLushaTest(data);
+      data.success ? toast.success(data.message) : toast.error(data.message);
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setLushaTesting(false);
+    }
+  };
+
   const toggleAzureAd = async (value) => {
     try {
       const { data } = await api.put("/settings/azure-ad", { enabled: value });
@@ -534,7 +596,7 @@ export default function Settings() {
     }
   };
 
-  if (!apollo || !groq || !logokit || !prospeo || !azureAd) return <PageLoader />;
+  if (!apollo || !groq || !logokit || !prospeo || !lusha || !azureAd) return <PageLoader />;
 
   const formatJobTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
 
@@ -806,6 +868,19 @@ export default function Settings() {
               onView={() => {
                 setProspeoTest(null);
                 setDetail("prospeo");
+              }}
+            />
+            <IntegrationTile
+              icon={<Icon.Phone width={18} height={18} className="text-emerald-600" />}
+              accent="bg-emerald-50"
+              title="Lusha API"
+              description="Reveal phone numbers and emails for contacts via Lusha search-and-enrich."
+              configured={lusha.configured}
+              enabled={lusha.enabled}
+              onToggle={toggleLusha}
+              onView={() => {
+                setLushaTest(null);
+                setDetail("lusha");
               }}
             />
             <IntegrationTile
@@ -1299,6 +1374,62 @@ export default function Settings() {
             <input className="input" value={prospeoUrl} onChange={(e) => setProspeoUrl(e.target.value)} placeholder="https://api.prospeo.io" />
           </Field>
           <TestResult result={prospeoTest} />
+        </div>
+      </Modal>
+
+      {/* Lusha detail modal */}
+      <Modal
+        open={detail === "lusha"}
+        onClose={() => setDetail(null)}
+        title="Lusha API"
+        footer={
+          <>
+            <button className="btn-secondary" onClick={testLusha} disabled={lushaTesting || !lusha.configured}>
+              {lushaTesting ? <Spinner className="h-4 w-4" /> : <Icon.Globe width={18} height={18} />} Test connection
+            </button>
+            <button className="btn-primary" onClick={saveLusha} disabled={lushaSaving}>
+              {lushaSaving && <Spinner className="h-4 w-4 border-white/40 border-t-white" />} Save
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border border-ink-100 bg-ink-50/60 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-ink-900">Integration status</p>
+              <p className="text-xs text-ink-400">Enable to reveal phones via Lusha search-and-enrich.</p>
+            </div>
+            <Toggle checked={lusha.enabled} onChange={toggleLusha} />
+          </div>
+          <Field label="API key">
+            <div className="flex gap-2">
+              <input
+                className="input"
+                type="password"
+                placeholder={lusha.configured ? lusha.api_key_masked || "••••••••" : "Enter your Lusha API key"}
+                value={lushaKey}
+                onChange={(e) => setLushaKey(e.target.value)}
+              />
+              {lusha.configured && (
+                <button className="btn-danger whitespace-nowrap" onClick={clearLushaKey}>Remove</button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-ink-400">
+              Stored encrypted. Generate a key in the{" "}
+              <a href="https://dashboard.lusha.com/enrich/api" target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
+                Lusha API dashboard
+              </a>
+              .
+            </p>
+          </Field>
+          <Field label="Base URL">
+            <input className="input" value={lushaUrl} onChange={(e) => setLushaUrl(e.target.value)} placeholder="https://api.lusha.com" />
+          </Field>
+          <div className="rounded-lg border border-ink-100 bg-ink-50/60 p-3 text-xs text-ink-500">
+            Uses <code className="rounded bg-white px-1">POST /v3/contacts/search-and-enrich</code> with{" "}
+            <code className="rounded bg-white px-1">reveal: phones</code>. Each lookup charges Lusha credits (search + reveal).
+          </div>
+          <TestResult result={lushaTest} />
         </div>
       </Modal>
 

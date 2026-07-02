@@ -3,6 +3,7 @@ from app.models.apollo_settings import ApolloSettings
 from app.models.groq_settings import GroqSettings
 from app.models.logokit_settings import LogokitSettings
 from app.models.prospeo_settings import ProspeoSettings
+from app.models.lusha_settings import LushaSettings
 from app.models.azure_ad_settings import AzureAdSettings
 from app.models.company import Company
 from app.models.company_saved_filter import CompanySavedFilter
@@ -18,6 +19,7 @@ __all__ = [
     "GroqSettings",
     "LogokitSettings",
     "ProspeoSettings",
+    "LushaSettings",
     "AzureAdSettings",
     "Company",
     "CompanySavedFilter",

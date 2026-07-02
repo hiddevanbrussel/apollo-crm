@@ -183,7 +183,8 @@ export default function Contacts() {
       .then((res) => {
         const apollo = res.data.apollo?.enabled && res.data.apollo?.configured;
         const prospeo = res.data.prospeo?.enabled && res.data.prospeo?.configured;
-        setEnrichReady(apollo || prospeo);
+        const lusha = res.data.lusha?.enabled && res.data.lusha?.configured;
+        setEnrichReady(apollo || prospeo || lusha);
         setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
       })
       .catch(() => {
@@ -620,7 +621,7 @@ export default function Contacts() {
                 className="btn-primary"
                 onClick={enrichSelected}
                 disabled={enrichingSelected || !enrichReady}
-                title={enrichReady ? "Match selected contacts" : "Enable Apollo or Prospeo in Settings"}
+                title={enrichReady ? "Match selected contacts (Apollo → Prospeo → Lusha for phone)" : "Enable Apollo, Prospeo, or Lusha in Settings"}
               >
                 {enrichingSelected ? (
                   <Spinner className="h-4 w-4 border-white/40 border-t-white" />

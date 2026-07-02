@@ -22,6 +22,9 @@ from app.schemas.settings import (
     ProspeoSettingsOut,
     ProspeoSettingsUpdate,
     ProspeoTestResult,
+    LushaSettingsOut,
+    LushaSettingsUpdate,
+    LushaTestResult,
 )
 from app.services.azure_auth_service import (
     get_masked_client_secret,
@@ -36,11 +39,13 @@ from app.services.settings_service import (
     build_client,
     build_groq_client,
     build_logokit_client,
+    build_lusha_client,
     build_prospeo_client,
     get_decrypted_logokit_token,
     get_masked_api_key,
     get_masked_groq_key,
     get_masked_prospeo_key,
+    get_or_create_lusha_settings,
     get_or_create_groq_settings,
     get_or_create_logokit_settings,
     get_or_create_prospeo_settings,
@@ -48,11 +53,14 @@ from app.services.settings_service import (
     groq_is_configured,
     is_configured,
     logokit_is_configured,
+    lusha_is_configured,
     prospeo_is_configured,
     set_api_key,
     set_groq_key,
     set_logokit_token,
+    set_lusha_key,
     set_prospeo_key,
+    get_masked_lusha_key,
 )
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -72,6 +80,7 @@ def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_cur
     groq = get_or_create_groq_settings(db)
     logokit = get_or_create_logokit_settings(db)
     prospeo = get_or_create_prospeo_settings(db)
+    lusha = get_or_create_lusha_settings(db)
     azure = get_or_create_azure_settings(db)
     return IntegrationsStatusOut(
         apollo=IntegrationServiceStatus(enabled=apollo.enabled, configured=is_configured(apollo)),
@@ -81,6 +90,9 @@ def integrations_status(db: Session = Depends(get_db), _: User = Depends(get_cur
         ),
         prospeo=IntegrationServiceStatus(
             enabled=prospeo.enabled, configured=prospeo_is_configured(prospeo)
+        ),
+        lusha=IntegrationServiceStatus(
+            enabled=lusha.enabled, configured=lusha_is_configured(lusha)
         ),
         azure_ad=IntegrationServiceStatus(
             enabled=azure.enabled, configured=is_azure_configured(azure)
@@ -295,6 +307,51 @@ def test_prospeo_settings(db: Session = Depends(get_db), _: User = Depends(get_a
     client = build_prospeo_client(db)
     ok, message, status_code = client.test_connection()
     return ProspeoTestResult(success=ok, message=message, status_code=status_code)
+
+
+# ---------------------------------------------------------------------------
+# Lusha
+# ---------------------------------------------------------------------------
+def _lusha_to_out(row) -> LushaSettingsOut:
+    out = LushaSettingsOut.model_validate(row)
+    out.configured = lusha_is_configured(row)
+    out.api_key_masked = get_masked_lusha_key(row)
+    return out
+
+
+@router.get("/lusha", response_model=LushaSettingsOut)
+def get_lusha_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    return _lusha_to_out(get_or_create_lusha_settings(db))
+
+
+@router.put("/lusha", response_model=LushaSettingsOut)
+def update_lusha_settings(
+    payload: LushaSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    row = get_or_create_lusha_settings(db)
+    if payload.clear_api_key:
+        row.api_key_encrypted = None
+    elif payload.api_key:
+        set_lusha_key(row, payload.api_key.strip())
+    if payload.base_url is not None and payload.base_url.strip():
+        row.base_url = payload.base_url.strip().rstrip("/")
+    if payload.enabled is not None:
+        row.enabled = payload.enabled
+    db.commit()
+    db.refresh(row)
+    return _lusha_to_out(row)
+
+
+@router.post("/lusha/test", response_model=LushaTestResult)
+def test_lusha_settings(db: Session = Depends(get_db), _: User = Depends(get_admin_user)):
+    row = get_or_create_lusha_settings(db)
+    if not lusha_is_configured(row):
+        return LushaTestResult(success=False, message="No Lusha API key configured.", status_code=400)
+    client = build_lusha_client(db)
+    ok, message, status_code = client.test_connection()
+    return LushaTestResult(success=ok, message=message, status_code=status_code)
 
 
 def _azure_to_out(row) -> AzureAdSettingsOut:

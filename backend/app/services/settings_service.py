@@ -7,11 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_settings
 from app.core.crypto import decrypt_value, encrypt_value, mask_api_key
-from app.models import ApolloSettings, GroqSettings, LogokitSettings, ProspeoSettings
+from app.models import ApolloSettings, GroqSettings, LogokitSettings, LushaSettings, ProspeoSettings
 from app.services.prospeo_service import ProspeoService
 from app.services.apollo_service import ApolloService
 from app.services.groq_service import GroqService
 from app.services.logokit_service import LogokitService
+from app.services.lusha_service import LushaService
 
 
 def get_or_create_settings(db: Session) -> ApolloSettings:
@@ -184,3 +185,47 @@ def build_prospeo_client(db: Session) -> ProspeoService:
     row = get_or_create_prospeo_settings(db)
     api_key = get_decrypted_prospeo_key(row)
     return ProspeoService(api_key=api_key, base_url=row.base_url)
+
+
+# ---------------------------------------------------------------------------
+# Lusha
+# ---------------------------------------------------------------------------
+def get_or_create_lusha_settings(db: Session) -> LushaSettings:
+    row = db.execute(select(LushaSettings).limit(1)).scalar_one_or_none()
+    if row is None:
+        row = LushaSettings(
+            base_url=app_settings.LUSHA_BASE_URL,
+            enabled=False,
+            api_key_encrypted=None,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def get_decrypted_lusha_key(row: LushaSettings) -> str | None:
+    if not row.api_key_encrypted:
+        return None
+    try:
+        return decrypt_value(row.api_key_encrypted)
+    except ValueError:
+        return None
+
+
+def get_masked_lusha_key(row: LushaSettings) -> str | None:
+    return mask_api_key(get_decrypted_lusha_key(row))
+
+
+def set_lusha_key(row: LushaSettings, api_key: str) -> None:
+    row.api_key_encrypted = encrypt_value(api_key)
+
+
+def lusha_is_configured(row: LushaSettings) -> bool:
+    return bool(row.api_key_encrypted)
+
+
+def build_lusha_client(db: Session) -> LushaService:
+    row = get_or_create_lusha_settings(db)
+    api_key = get_decrypted_lusha_key(row)
+    return LushaService(api_key=api_key, base_url=row.base_url)

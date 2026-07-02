@@ -34,12 +34,21 @@ from app.services.prospeo_mapper import (
     pick_best_prospeo_search_match,
 )
 from app.services.prospeo_service import ProspeoError, ProspeoService
+from app.services.lusha_mapper import (
+    build_lusha_contact_payload,
+    has_lusha_match_criteria,
+    map_lusha_contact,
+)
+from app.services.lusha_service import LushaError, LushaService
 from app.services.settings_service import (
     build_client,
+    build_lusha_client,
     build_prospeo_client,
+    get_or_create_lusha_settings,
     get_or_create_prospeo_settings,
     get_or_create_settings,
     is_configured,
+    lusha_is_configured,
     prospeo_is_configured,
 )
 
@@ -47,6 +56,7 @@ PEOPLE_MATCH_ENDPOINT = "/api/v1/people/match"
 PEOPLE_SEARCH_ENDPOINT = "/api/v1/mixed_people/api_search"
 PROSPEO_ENRICH_ENDPOINT = "/enrich-person"
 PROSPEO_SEARCH_ENDPOINT = "/search-person"
+LUSHA_SEARCH_AND_ENRICH_ENDPOINT = "/v3/contacts/search-and-enrich"
 
 
 @dataclass
@@ -190,6 +200,48 @@ def _store_prospeo_raw_data(
         meta["search_filters"] = search_filters
     stored["raw"] = meta
     contact.prospeo_data = stored
+
+
+def _store_lusha_raw_data(
+    contact: Contact,
+    *,
+    response: dict[str, Any],
+    request_payload: dict[str, Any],
+    result: dict[str, Any] | None = None,
+) -> None:
+    stored = dict(result or {})
+    stored["raw"] = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "request": request_payload,
+        "response": {
+            "requestId": response.get("requestId"),
+            "billing": response.get("billing"),
+        },
+    }
+    contact.lusha_data = stored
+
+
+def _apply_lusha_mapped_to_contact(
+    db: Session,
+    contact: Contact,
+    mapped: dict[str, Any],
+    *,
+    fill_phone_only: bool = False,
+) -> None:
+    if fill_phone_only:
+        phone = mapped.get("phone")
+        if phone and not contact.phone:
+            contact.phone = phone
+        if mapped.get("lusha_id") and not contact.lusha_id:
+            contact.lusha_id = mapped["lusha_id"]
+        return
+    _apply_mapped_to_contact(
+        db,
+        contact,
+        mapped,
+        external_id_field="lusha_id",
+        map_org=lambda _org: {},
+    )
 
 
 def _match_strategy_label(payload: dict[str, Any]) -> str:
@@ -632,46 +684,165 @@ def enrich_contact_prospeo(
     return EnrichContactResult(ok=True, status="enriched", provider="prospeo")
 
 
+def enrich_contact_lusha(
+    db: Session,
+    client: LushaService,
+    contact: Contact,
+    *,
+    company: Company | None = None,
+    fill_phone_only: bool = False,
+) -> EnrichContactResult:
+    """Enrich one contact via Lusha search-and-enrich (phones by default)."""
+    if company is None and contact.company_id:
+        company = db.get(Company, contact.company_id)
+
+    payload = build_lusha_contact_payload(contact, company)
+    if not has_lusha_match_criteria(payload):
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Not enough data for Lusha (need email, LinkedIn URL, Lusha ID, or name + company).",
+            provider="lusha",
+        )
+
+    reveal = ["phones"]
+    if not contact.email:
+        reveal = ["phones", "emails"]
+
+    request_payload = {
+        "contacts": [payload],
+        "reveal": reveal,
+    }
+
+    try:
+        response = client.search_and_enrich_contacts([payload], reveal=reveal)
+    except LushaError as exc:
+        contact.enrichment_status = "failed"
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint=LUSHA_SEARCH_AND_ENRICH_ENDPOINT,
+                request_payload=request_payload,
+                response_status=exc.status_code or 400,
+            )
+        )
+        return EnrichContactResult(ok=False, status="failed", error=exc.message, provider="lusha")
+
+    results = response.get("results") or []
+    result = results[0] if results else None
+    if not result or result.get("error"):
+        error_obj = (result or {}).get("error") or {}
+        message = error_obj.get("message") or "Lusha found no matching contact."
+        contact.enrichment_status = "failed"
+        db.add(
+            EnrichmentLog(
+                entity_type="contact",
+                entity_id=contact.id,
+                endpoint=LUSHA_SEARCH_AND_ENRICH_ENDPOINT,
+                request_payload=request_payload,
+                response_status=404,
+            )
+        )
+        return EnrichContactResult(ok=False, status="failed", error=message, provider="lusha")
+
+    mapped = map_lusha_contact(result)
+    if not mapped.get("phone") and fill_phone_only:
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Lusha did not return a phone number for this contact.",
+            provider="lusha",
+        )
+    if not mapped:
+        contact.enrichment_status = "failed"
+        return EnrichContactResult(
+            ok=False,
+            status="failed",
+            error="Lusha returned an empty contact record.",
+            provider="lusha",
+        )
+
+    _apply_lusha_mapped_to_contact(db, contact, mapped, fill_phone_only=fill_phone_only)
+    _store_lusha_raw_data(contact, response=response, request_payload=request_payload, result=result)
+
+    if contact.enrichment_status != "enriched":
+        contact.enrichment_status = "enriched"
+    if not fill_phone_only or mapped.get("phone"):
+        contact.source = "lusha"
+
+    db.add(
+        EnrichmentLog(
+            entity_type="contact",
+            entity_id=contact.id,
+            endpoint=LUSHA_SEARCH_AND_ENRICH_ENDPOINT,
+            request_payload=request_payload,
+            response_status=200,
+        )
+    )
+    return EnrichContactResult(ok=True, status="enriched", provider="lusha")
+
+
 def enrich_contact_auto(
     db: Session,
     contact: Contact,
     *,
     company: Company | None = None,
 ) -> EnrichContactResult:
-    """Try Apollo first, then Prospeo when Apollo does not match."""
+    """Try Apollo, then Prospeo, then Lusha (for phone numbers)."""
     apollo_row = get_or_create_settings(db)
     prospeo_row = get_or_create_prospeo_settings(db)
+    lusha_row = get_or_create_lusha_settings(db)
     apollo_on = apollo_row.enabled and is_configured(apollo_row)
     prospeo_on = prospeo_row.enabled and prospeo_is_configured(prospeo_row)
+    lusha_on = lusha_row.enabled and lusha_is_configured(lusha_row)
 
-    if not apollo_on and not prospeo_on:
+    if not apollo_on and not prospeo_on and not lusha_on:
         return EnrichContactResult(
             ok=False,
             status="failed",
-            error="No enrichment provider enabled. Configure Apollo or Prospeo in Settings.",
+            error="No enrichment provider enabled. Configure Apollo, Prospeo, or Lusha in Settings.",
         )
 
-    apollo_result: EnrichContactResult | None = None
+    final_result: EnrichContactResult | None = None
+
     if apollo_on:
-        apollo_result = enrich_contact_apollo(db, build_client(db), contact, company=company)
-        if apollo_result.ok:
-            return apollo_result
+        final_result = enrich_contact_apollo(db, build_client(db), contact, company=company)
+        if final_result.ok and contact.phone:
+            return final_result
 
     if prospeo_on:
         prospeo_result = enrich_contact_prospeo(
             db, build_prospeo_client(db), contact, company=company
         )
         if prospeo_result.ok:
-            return prospeo_result
-        if apollo_result and not apollo_result.ok:
+            final_result = prospeo_result
+            if contact.phone:
+                return prospeo_result
+        elif not final_result or not final_result.ok:
+            final_result = prospeo_result
+
+    if lusha_on and not contact.phone:
+        lusha_result = enrich_contact_lusha(
+            db,
+            build_lusha_client(db),
+            contact,
+            company=company,
+            fill_phone_only=bool(final_result and final_result.ok),
+        )
+        if lusha_result.ok:
+            return lusha_result
+        if final_result and final_result.ok:
+            return final_result
+        if final_result and not final_result.ok and lusha_result.error:
             return EnrichContactResult(
                 ok=False,
                 status="failed",
-                error=f"Apollo: {apollo_result.error}. Prospeo: {prospeo_result.error}",
-                provider="prospeo",
+                error=f"{final_result.error}. Lusha: {lusha_result.error}",
+                provider="lusha",
             )
-        return prospeo_result
+        final_result = lusha_result
 
-    return apollo_result or EnrichContactResult(
+    return final_result or EnrichContactResult(
         ok=False, status="failed", error="Enrichment failed."
     )

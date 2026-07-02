@@ -63,6 +63,7 @@ export default function CompanyDetail() {
   const [enriching, setEnriching] = useState(false);
   const [apolloReady, setApolloReady] = useState(false);
   const [prospeoReady, setProspeoReady] = useState(false);
+  const [lushaReady, setLushaReady] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingEdit, setSavingEdit] = useState(false);
@@ -77,8 +78,12 @@ export default function CompanyDetail() {
     api
       .get("/settings/status")
       .then((res) => {
-        setApolloReady(res.data.apollo?.enabled && res.data.apollo?.configured);
-        setProspeoReady(res.data.prospeo?.enabled && res.data.prospeo?.configured);
+        const apollo = res.data.apollo?.enabled && res.data.apollo?.configured;
+        const prospeo = res.data.prospeo?.enabled && res.data.prospeo?.configured;
+        const lusha = res.data.lusha?.enabled && res.data.lusha?.configured;
+        setApolloReady(apollo);
+        setProspeoReady(prospeo);
+        setLushaReady(lusha);
         setGroqReady(res.data.groq?.enabled && res.data.groq?.configured);
       })
       .catch(() => {
@@ -177,7 +182,7 @@ export default function CompanyDetail() {
       toast.success(
         data.enrichment_status === "pending"
           ? "Contact matched. Waterfall email may arrive in a few minutes."
-          : `Contact enriched via ${data.source === "prospeo" ? "Prospeo" : "Apollo"}.`,
+          : `Contact enriched via ${data.source === "prospeo" ? "Prospeo" : data.source === "lusha" ? "Lusha" : "Apollo"}.`,
       );
     } catch (err) {
       toast.error(apiError(err));
@@ -251,7 +256,7 @@ export default function CompanyDetail() {
   if (!company) return <PageLoader />;
 
   const website = company.website || (company.domain ? `https://${company.domain}` : null);
-  const enrichReady = apolloReady || prospeoReady;
+  const enrichReady = apolloReady || prospeoReady || lushaReady;
 
   return (
     <div className="space-y-5">

@@ -57,10 +57,12 @@ class ContactOut(ContactBase):
     photo_url: str | None = None
     apollo_id: str | None = None
     prospeo_id: str | None = None
+    lusha_id: str | None = None
     source: str
     enrichment_status: str
     apollo_data: dict | None = None
     prospeo_data: dict | None = None
+    lusha_data: dict | None = None
     created_at: datetime
     updated_at: datetime
     company: CompanyBrief | None = None

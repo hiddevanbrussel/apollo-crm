@@ -31,12 +31,15 @@ class Contact(Base):
     department: Mapped[str | None] = mapped_column(String(120), nullable=True)
     apollo_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True, nullable=True)
     prospeo_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True, nullable=True)
+    lusha_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual", nullable=False)
     enrichment_status: Mapped[str] = mapped_column(String(50), default="none", nullable=False)
     # Full raw Apollo payload: person fields plus nested ``raw`` with match/search API responses.
     apollo_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
     # Full raw Prospeo enrich-person response plus nested ``raw`` with search API responses.
     prospeo_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    # Full raw Lusha search-and-enrich response plus nested ``raw`` metadata.
+    lusha_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

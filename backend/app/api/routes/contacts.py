@@ -35,6 +35,7 @@ from app.services.apollo_webhook import public_base_url_configured, waterfall_en
 from app.services.contact_enrich import (
     enrich_contact_apollo,
     enrich_contact_auto,
+    enrich_contact_lusha,
     enrich_contact_prospeo,
     store_apollo_person_profile,
 )
@@ -51,10 +52,13 @@ from app.services.import_service import (
 )
 from app.services.settings_service import (
     build_client,
+    build_lusha_client,
     build_prospeo_client,
+    get_or_create_lusha_settings,
     get_or_create_prospeo_settings,
     get_or_create_settings,
     is_configured,
+    lusha_is_configured,
     prospeo_is_configured,
 )
 
@@ -341,15 +345,30 @@ def _ensure_prospeo_enabled(db: Session) -> None:
         )
 
 
+def _ensure_lusha_enabled(db: Session) -> None:
+    row = get_or_create_lusha_settings(db)
+    if not row.enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="The Lusha integration is off. Enable it in Settings to enrich.",
+        )
+    if not lusha_is_configured(row):
+        raise HTTPException(
+            status_code=400, detail="No Lusha API key configured. Add one in Settings."
+        )
+
+
 def _ensure_enrichment_enabled(db: Session) -> None:
     apollo = get_or_create_settings(db)
     prospeo = get_or_create_prospeo_settings(db)
+    lusha = get_or_create_lusha_settings(db)
     apollo_on = apollo.enabled and is_configured(apollo)
     prospeo_on = prospeo.enabled and prospeo_is_configured(prospeo)
-    if not apollo_on and not prospeo_on:
+    lusha_on = lusha.enabled and lusha_is_configured(lusha)
+    if not apollo_on and not prospeo_on and not lusha_on:
         raise HTTPException(
             status_code=400,
-            detail="No enrichment provider enabled. Configure Apollo or Prospeo in Settings.",
+            detail="No enrichment provider enabled. Configure Apollo, Prospeo, or Lusha in Settings.",
         )
 
 
@@ -1095,6 +1114,28 @@ def enrich_contact_prospeo_only(
         db.commit()
         status = 404 if enrich_result.error and "no matching" in enrich_result.error.lower() else 400
         raise HTTPException(status_code=status, detail=enrich_result.error or "Prospeo enrich failed.")
+
+    db.commit()
+    db.refresh(contact)
+    return ContactOut.model_validate(contact)
+
+
+@router.post("/{contact_id}/enrich-lusha", response_model=ContactOut)
+def enrich_contact_lusha_only(
+    contact_id: int, db: Session = Depends(get_db), _: User = Depends(get_admin_user)
+):
+    contact = db.get(Contact, contact_id)
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found.")
+
+    _ensure_lusha_enabled(db)
+    enrich_result = enrich_contact_lusha(db, build_lusha_client(db), contact)
+    if not enrich_result.ok:
+        db.commit()
+        status = 404 if enrich_result.error and "no matching" in enrich_result.error.lower() else 400
+        if enrich_result.error and "phone number" in enrich_result.error.lower():
+            status = 404
+        raise HTTPException(status_code=status, detail=enrich_result.error or "Lusha enrich failed.")
 
     db.commit()
     db.refresh(contact)
