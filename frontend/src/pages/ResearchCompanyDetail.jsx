@@ -49,6 +49,7 @@ export default function ResearchCompanyDetail() {
   const [contactMaxRecords, setContactMaxRecords] = useState(500);
   const [contactFilters, setContactFilters] = useState(() => emptyFilters(PEOPLE_CONTACT_FIELDS));
   const [runningContacts, setRunningContacts] = useState(false);
+  const [removingContactId, setRemovingContactId] = useState(null);
 
   const [showEditCompany, setShowEditCompany] = useState(false);
   const [companyForm, setCompanyForm] = useState({
@@ -102,6 +103,27 @@ export default function ResearchCompanyDetail() {
       setContactsLoading(false);
     }
   }, [searchId, resultId, toast]);
+
+  const removeContact = async (ct) => {
+    const vaultId = ct.vault_id || ct.id;
+    if (
+      !confirm(
+        "Dit contact van dit bedrijf verwijderen? Het blijft in bestaande contactrecordsets staan, maar verschijnt niet meer bij dit bedrijf en komt niet automatisch terug bij een nieuwe zoekactie."
+      )
+    ) {
+      return;
+    }
+    setRemovingContactId(vaultId);
+    try {
+      await api.delete(`/research/searches/${searchId}/results/${resultId}/contacts/${vaultId}`);
+      toast.success("Contact verwijderd van dit bedrijf.");
+      await loadContacts();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setRemovingContactId(null);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -480,19 +502,35 @@ export default function ResearchCompanyDetail() {
                             />
                           </td>
                           <td className="table-td text-right">
-                            {ct.source === "crm" ? (
-                              <Link to={`/contacts/${ct.id}`} className="btn-ghost px-2 py-1 text-sm">
-                                Open
-                              </Link>
-                            ) : (
-                              <Link
-                                to={`/research/${ct.research_search_id}`}
-                                className="btn-ghost px-2 py-1 text-sm"
-                                title={ct.research_search_name || "People research"}
-                              >
-                                Open research
-                              </Link>
-                            )}
+                            <div className="flex items-center justify-end gap-1">
+                              {ct.source === "crm" ? (
+                                <Link to={`/contacts/${ct.id}`} className="btn-ghost px-2 py-1 text-sm">
+                                  Open
+                                </Link>
+                              ) : (
+                                <>
+                                  <Link
+                                    to={`/research/${ct.research_search_id}`}
+                                    className="btn-ghost px-2 py-1 text-sm"
+                                    title={ct.research_search_name || "People research"}
+                                  >
+                                    Open research
+                                  </Link>
+                                  <button
+                                    className="btn-ghost px-2 py-1 text-sm text-red-600 hover:bg-red-50"
+                                    onClick={() => removeContact(ct)}
+                                    disabled={removingContactId === (ct.vault_id || ct.id)}
+                                    title="Verwijder van dit bedrijf"
+                                  >
+                                    {removingContactId === (ct.vault_id || ct.id) ? (
+                                      <Spinner className="h-4 w-4" />
+                                    ) : (
+                                      <Icon.Trash width={16} height={16} />
+                                    )}
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}

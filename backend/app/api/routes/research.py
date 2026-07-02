@@ -507,6 +507,36 @@ def list_company_result_contacts(
     return ResearchCompanyContactsOut(**payload)
 
 
+@router.delete(
+    "/searches/{search_id}/results/{result_id}/contacts/{vault_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def archive_company_result_contact(
+    search_id: int,
+    result_id: int,
+    vault_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    search, result = _get_result_or_404(db, search_id, result_id)
+    if search.query_type != "organizations":
+        raise HTTPException(status_code=400, detail="Contacts can only be removed from company research.")
+    if result.entity_type != "company":
+        raise HTTPException(status_code=400, detail="This record is not a company.")
+    from app.services.research_company_contacts import archive_vault_contact
+
+    try:
+        archive_vault_contact(
+            db,
+            parent_search=search,
+            company_result=result,
+            vault_id=vault_id,
+        )
+    except ApolloError as exc:
+        raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
+    return None
+
+
 @router.get("/searches/{search_id}/results/{result_id}", response_model=ResearchResultDetail)
 def get_search_result(
     search_id: int,

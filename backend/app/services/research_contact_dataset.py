@@ -275,7 +275,11 @@ def import_vault_contacts_to_recordset(
     skipped = 0
     for vault_id in vault_ids:
         contact = db.get(ResearchCompanyContact, vault_id)
-        if not contact or contact.company_search_id != parent.id:
+        if (
+            not contact
+            or contact.company_search_id != parent.id
+            or contact.archived_at is not None
+        ):
             skipped += 1
             continue
 

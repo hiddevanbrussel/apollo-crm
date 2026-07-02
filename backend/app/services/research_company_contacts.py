@@ -122,6 +122,8 @@ def upsert_company_contact(
         "raw_data": person_raw,
     }
     if existing:
+        if existing.archived_at is not None:
+            return existing
         if is_enriched(existing.raw_data or {}) and not is_enriched(person_raw):
             payload.pop("raw_data", None)
         for key, value in payload.items():
@@ -358,6 +360,7 @@ def list_vault_contacts_for_company(
             .where(
                 ResearchCompanyContact.company_search_id == parent_search.id,
                 ResearchCompanyContact.company_result_id == company_result.id,
+                ResearchCompanyContact.archived_at.is_(None),
             )
             .order_by(ResearchCompanyContact.updated_at.desc())
         )
@@ -387,6 +390,45 @@ def list_vault_contacts_for_company(
     return items
 
 
+def require_vault_contact(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    company_result: ResearchResult,
+    vault_id: int,
+) -> ResearchCompanyContact:
+    contact = db.get(ResearchCompanyContact, vault_id)
+    if (
+        not contact
+        or contact.company_search_id != parent_search.id
+        or contact.company_result_id != company_result.id
+    ):
+        raise ApolloError("Contact not found for this company.", status_code=404)
+    return contact
+
+
+def archive_vault_contact(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    company_result: ResearchResult,
+    vault_id: int,
+) -> None:
+    """Archive a company-level contact (hidden from company; not re-synced from searches)."""
+    from datetime import datetime, timezone
+
+    contact = require_vault_contact(
+        db,
+        parent_search=parent_search,
+        company_result=company_result,
+        vault_id=vault_id,
+    )
+    if contact.archived_at is not None:
+        return
+    contact.archived_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 def require_company_result(
     db: Session,
     *,
@@ -397,6 +439,51 @@ def require_company_result(
     if not result or result.search_id != parent_search.id or result.entity_type != "company":
         raise ApolloError("Company not found in this recordset.", status_code=404)
     return result
+
+
+def person_is_archived_for_company(
+    db: Session,
+    *,
+    company_result_id: int,
+    person_raw: dict[str, Any],
+) -> bool:
+    rows = (
+        db.execute(
+            select(ResearchCompanyContact).where(
+                ResearchCompanyContact.company_result_id == company_result_id,
+                ResearchCompanyContact.archived_at.isnot(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for contact in rows:
+        if vault_contact_matches_person(contact, person_raw):
+            return True
+    return False
+
+
+def company_result_ids_for_person(
+    db: Session,
+    *,
+    parent_search: ResearchSearch,
+    person_raw: dict[str, Any],
+    company_result: ResearchResult | None = None,
+    people_criteria: dict[str, Any] | None = None,
+) -> list[int]:
+    if company_result is not None:
+        return [company_result.id]
+    fake_search = _CriteriaSearch(people_criteria or {})
+    return [
+        target.id
+        for target in resolve_company_results_for_person(
+            db,
+            parent_search=parent_search,
+            company_result=None,
+            person_raw=person_raw,
+            people_search=fake_search,  # type: ignore[arg-type]
+        )
+    ]
 
 
 class _CriteriaSearch:
@@ -415,7 +502,10 @@ def load_vault_contacts_by_company(
     rows = (
         db.execute(
             select(ResearchCompanyContact)
-            .where(ResearchCompanyContact.company_search_id == company_search_id)
+            .where(
+                ResearchCompanyContact.company_search_id == company_search_id,
+                ResearchCompanyContact.archived_at.is_(None),
+            )
             .order_by(ResearchCompanyContact.updated_at.desc())
         )
         .scalars()

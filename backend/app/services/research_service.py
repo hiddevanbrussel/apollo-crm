@@ -308,11 +308,13 @@ def _mark_existing_at_company_on_people(
 ) -> list[dict[str, Any]]:
     """Tag people already on the company vault; merge enriched profile when matched."""
     from app.services.research_company_contacts import (
+        company_result_ids_for_person,
         find_matching_prior_person_raw,
         find_matching_vault_contact,
         load_vault_contacts_by_company,
         merge_person_with_known_profile,
         merge_person_with_vault_contact,
+        person_is_archived_for_company,
         sync_vault_from_child_searches,
     )
 
@@ -321,6 +323,20 @@ def _mark_existing_at_company_on_people(
 
     marked: list[dict[str, Any]] = []
     for raw in collected:
+        company_ids = company_result_ids_for_person(
+            db,
+            parent_search=parent_search,
+            person_raw=raw,
+            company_result=company_result,
+            people_criteria=criteria,
+        )
+        if any(
+            person_is_archived_for_company(db, company_result_id=cid, person_raw=raw)
+            for cid in company_ids
+        ):
+            marked.append(dict(raw))
+            continue
+
         contact = find_matching_vault_contact(
             db,
             parent_search=parent_search,
