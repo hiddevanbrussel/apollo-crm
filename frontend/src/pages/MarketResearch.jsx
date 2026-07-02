@@ -211,29 +211,28 @@ export default function MarketResearch() {
 
   const planWithAi = async () => {
     if (!aiPrompt.trim()) {
-      toast.info("Beschrijf eerst wat je wilt onderzoeken.");
+      toast.info("Describe what you want to research first.");
       return;
     }
     setAiPlanning(true);
     setAiPlanSummary("");
     setAiPlan(null);
     try {
-      const { data } = await api.post("/ai/research/plan", { prompt: aiPrompt.trim() });
+      const { data } = await api.post("/ai/research/plan", {
+        prompt: aiPrompt.trim(),
+        company_source: "apollo",
+      });
       setAiPlan(data);
       setName(data.name);
       setMode(data.query_type === "people" ? "people" : "organizations");
       setMaxRecords(data.max_records);
       if (data.query_type === "people") {
         setPeopleFilters(criteriaToFilters(data.criteria, PEOPLE_FILTER_FIELDS));
-      } else if (data.source !== "groq") {
+      } else {
         setOrgFilters(criteriaToFilters(data.criteria, ORG_FILTER_FIELDS));
       }
       setAiPlanSummary(data.summary);
-      const readyMsg =
-        data.source === "groq" && data.query_type === "organizations"
-          ? "Bedrijvenlijst klaar — controleer en klik Run & save."
-          : "Zoekplan klaar — controleer de filters en klik Run & save.";
-      toast.success(readyMsg);
+      toast.success("Search plan ready — review the filters and click Run & save.");
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -249,10 +248,10 @@ export default function MarketResearch() {
     }
     const groqOrgPlan = aiPlan?.source === "groq" && mode === "organizations";
     const creditNote = groqOrgPlan
-      ? "Deze lijst komt van Groq (geen Apollo credits)."
+      ? "This list comes from Groq (no Apollo credits)."
       : mode === "organizations"
         ? "Company searches use Apollo credits."
-        : "People API Search does not consume credits, but results are stored locally.";
+        : "People search does not consume credits; results are stored locally.";
     const confirmCount = groqOrgPlan ? aiPlan.companies?.length || maxRecords : maxRecords;
     if (!confirm(`Run this search and capture up to ${confirmCount} records? ${creditNote}`)) return;
 
@@ -451,11 +450,11 @@ export default function MarketResearch() {
           <div className="rounded-lg border border-brand-200 bg-brand-50/40 p-4">
             <p className="mb-2 text-sm font-medium text-ink-800">
               <Icon.Sparkles width={16} height={16} className="mr-1 inline text-brand-600" />
-              Beschrijf in gewone taal
+              Describe in plain language
             </p>
             <textarea
               className="input min-h-[72px] w-full resize-y text-sm"
-              placeholder="Bijv.: top 20 grootste energiemaatschappijen in Nederland"
+              placeholder="e.g. top 20 largest energy companies in the Netherlands"
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
               disabled={disabled || aiPlanning}
@@ -463,7 +462,7 @@ export default function MarketResearch() {
             <div className="mt-2 flex items-center gap-2">
               <button type="button" className="btn-secondary text-sm" onClick={planWithAi} disabled={disabled || aiPlanning || !aiPrompt.trim()}>
                 {aiPlanning ? <Spinner className="h-4 w-4" /> : <Icon.Sparkles width={16} height={16} />}
-                Plan met AI
+                Plan with AI
               </button>
             </div>
             {aiPlanSummary ? <p className="mt-2 text-xs text-ink-600">{aiPlanSummary}</p> : null}
@@ -472,7 +471,7 @@ export default function MarketResearch() {
           <div className="rounded-lg border border-ink-200 bg-ink-50/50 px-4 py-3 text-sm text-ink-600">
             <Icon.Sparkles width={16} height={16} className="mb-1 inline text-brand-500" />{" "}
             {aiPlan?.source === "groq" && mode === "organizations"
-              ? "AI company lists use Groq (no Apollo credits). Manual Apollo filters still use credits."
+              ? "This company list came from AI chat (Groq, no Apollo credits)."
               : "Company search uses credits; people search does not. Results stay separate from your CRM."}
           </div>
 
@@ -498,7 +497,7 @@ export default function MarketResearch() {
           ) : (
             <div className="rounded-lg border border-ink-200 bg-white p-4">
               <p className="mb-2 text-sm font-medium text-ink-800">
-                {aiPlan.companies?.length || 0} voorgestelde bedrijven
+                {aiPlan.companies?.length || 0} suggested companies
               </p>
               <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-ink-600">
                 {aiPlan.companies?.map((company) => (
@@ -506,7 +505,7 @@ export default function MarketResearch() {
                     {company.name}
                     {company.domain ? <span className="text-ink-400"> · {company.domain}</span> : null}
                     {company.employee_count ? (
-                      <span className="text-ink-400"> · ~{company.employee_count.toLocaleString()} medewerkers</span>
+                      <span className="text-ink-400"> · ~{company.employee_count.toLocaleString()} employees</span>
                     ) : null}
                   </li>
                 ))}

@@ -37,6 +37,7 @@ class ResearchPlanOut(BaseModel):
 
 class ResearchPlanRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
+    company_source: str = Field(default="groq", pattern="^(apollo|groq)$")
 
 
 class ResearchCreateFromPlan(BaseModel):

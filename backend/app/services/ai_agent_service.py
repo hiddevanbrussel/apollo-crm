@@ -186,7 +186,7 @@ def ask(client: GroqService, question: str) -> dict[str, Any]:
 
     if intent == "research":
         try:
-            plan = plan_research(client, question)
+            plan = plan_research(client, question, company_source="groq")
         except ResearchNlError as exc:
             raise AgentError(exc.message, status_code=exc.status_code or 400) from exc
         except GroqError as exc:

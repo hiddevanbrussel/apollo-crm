@@ -92,7 +92,7 @@ def ai_research_plan(
     _groq_ready(db)
     client = build_groq_client(db)
     try:
-        plan = plan_research(client, payload.prompt)
+        plan = plan_research(client, payload.prompt, company_source=payload.company_source)
     except ResearchNlError as exc:
         raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)
     return ResearchPlanOut(**plan)
