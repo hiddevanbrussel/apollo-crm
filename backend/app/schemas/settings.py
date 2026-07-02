@@ -35,6 +35,7 @@ class GroqSettingsOut(BaseModel):
     base_url: str
     model: str
     enabled: bool
+    assistant_enabled: bool = True
     configured: bool = False
     api_key_masked: str | None = None
     created_at: datetime
@@ -46,6 +47,7 @@ class GroqSettingsUpdate(BaseModel):
     base_url: str | None = None
     model: str | None = None
     enabled: bool | None = None
+    assistant_enabled: bool | None = None
     clear_api_key: bool = False
 
 

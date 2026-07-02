@@ -67,3 +67,4 @@ class AiStatus(BaseModel):
     configured: bool
     model: str | None = None
     message: str | None = None
+    widget_enabled: bool = True

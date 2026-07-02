@@ -65,7 +65,13 @@ def ai_status(db: Session = Depends(get_db), _: User = Depends(get_current_user)
         message = "Groq is disabled. Enable it in Settings to use the assistant."
     else:
         message = "Ready."
-    return AiStatus(enabled=row.enabled, configured=configured, model=row.model, message=message)
+    return AiStatus(
+        enabled=row.enabled,
+        configured=configured,
+        model=row.model,
+        message=message,
+        widget_enabled=row.assistant_enabled,
+    )
 
 
 @router.post("/ask", response_model=AskResponse)

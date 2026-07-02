@@ -1,9 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import api from "../api/client";
 import AiChat from "./AiChat";
 import { Icon } from "./icons";
 
 export default function AiAssistantWidget() {
   const [open, setOpen] = useState(false);
+  const [widgetEnabled, setWidgetEnabled] = useState(null);
+
+  useEffect(() => {
+    api
+      .get("/ai/status")
+      .then((res) => setWidgetEnabled(res.data.widget_enabled !== false))
+      .catch(() => setWidgetEnabled(true));
+  }, []);
+
+  if (widgetEnabled === false) {
+    return null;
+  }
+
+  if (widgetEnabled === null) {
+    return null;
+  }
 
   return (
     <>

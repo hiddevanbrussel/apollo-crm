@@ -314,6 +314,16 @@ export default function Settings() {
     }
   };
 
+  const toggleGroqAssistant = async (value) => {
+    try {
+      const { data } = await api.put("/settings/groq", { assistant_enabled: value });
+      setGroq(data);
+      toast.success(`AI assistant ${value ? "enabled" : "disabled"}.`);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
   const saveGroq = async () => {
     setGroqSaving(true);
     try {
@@ -776,7 +786,7 @@ export default function Settings() {
               icon={<Icon.Bolt width={18} height={18} className="text-accent-600" />}
               accent="bg-accent-50"
               title="Groq API"
-              description="AI domain finder for companies and Title AI normalization for uniform contact job titles."
+              description="AI domain finder, Title AI normalization, and the floating AI assistant chat widget."
               configured={groq.configured}
               enabled={groq.enabled}
               onToggle={toggleGroq}
@@ -1082,6 +1092,15 @@ export default function Settings() {
               <p className="text-xs text-ink-400">Enable to allow AI domain lookups via Groq.</p>
             </div>
             <Toggle checked={groq.enabled} onChange={toggleGroq} />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-ink-100 bg-ink-50/60 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-ink-900">AI assistant widget</p>
+              <p className="text-xs text-ink-400">
+                Show or hide the floating AI assistant button in the bottom-right corner of the app.
+              </p>
+            </div>
+            <Toggle checked={groq?.assistant_enabled !== false} onChange={toggleGroqAssistant} />
           </div>
           <Field label="API key">
             <div className="flex gap-2">

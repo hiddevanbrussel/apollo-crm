@@ -16,6 +16,7 @@ class GroqSettings(Base):
     )
     model: Mapped[str] = mapped_column(String(120), default="groq/compound", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    assistant_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

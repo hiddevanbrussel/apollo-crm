@@ -156,6 +156,8 @@ def update_groq_settings(
         row.model = payload.model.strip()
     if payload.enabled is not None:
         row.enabled = payload.enabled
+    if payload.assistant_enabled is not None:
+        row.assistant_enabled = payload.assistant_enabled
     db.commit()
     db.refresh(row)
     return _groq_to_out(row)

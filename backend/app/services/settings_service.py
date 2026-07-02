@@ -66,6 +66,7 @@ def get_or_create_groq_settings(db: Session) -> GroqSettings:
             base_url="https://api.groq.com",
             model="groq/compound",
             enabled=False,
+            assistant_enabled=True,
             api_key_encrypted=None,
         )
         db.add(row)
