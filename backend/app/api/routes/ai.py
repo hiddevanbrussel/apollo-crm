@@ -105,21 +105,23 @@ def ai_research_create(
     user: User = Depends(get_current_user),
 ):
     _groq_ready(db)
-    _ensure_apollo_enabled(db)
-    apollo = build_client(db)
-    criteria = dict(payload.criteria or {})
-    if payload.tag and payload.tag.strip():
-        criteria["_recordset_tag"] = payload.tag.strip()
+    apollo = None
+    if payload.query_type == "people" or payload.source == "apollo":
+        _ensure_apollo_enabled(db)
+        apollo = build_client(db)
     try:
         search = create_research_from_plan(
             db,
             apollo,
             name=payload.name,
             query_type=payload.query_type,
-            criteria=criteria,
+            source=payload.source,
+            criteria=payload.criteria,
+            companies=[c.model_dump() for c in payload.companies],
             max_records=payload.max_records,
             sort_by=payload.sort_by,
             created_by=user.id,
+            summary=payload.summary,
         )
     except ResearchNlError as exc:
         raise HTTPException(status_code=exc.status_code or 400, detail=exc.message)

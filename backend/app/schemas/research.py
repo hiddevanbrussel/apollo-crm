@@ -9,7 +9,6 @@ class ResearchCreate(BaseModel):
     query_type: str  # 'people' | 'organizations'
     criteria: dict[str, Any] = {}
     max_records: int = Field(default=500, ge=1, le=2000)
-    tag: str | None = Field(default=None, max_length=80)
 
 
 class ResearchDatasetCreate(BaseModel):

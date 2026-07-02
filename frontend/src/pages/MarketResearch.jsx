@@ -43,12 +43,6 @@ function buildResearchTree(searches) {
   return roots;
 }
 
-function ResearchTagBadge({ search }) {
-  const tag = search.criteria?._recordset_tag;
-  if (!tag) return <span className="text-ink-300">—</span>;
-  return <span className="badge bg-amber-50 text-amber-800">{tag}</span>;
-}
-
 function ResearchTypeBadge({ search }) {
   if (
     search.criteria?._dataset_source === "manual" &&
@@ -63,7 +57,10 @@ function ResearchTypeBadge({ search }) {
   if (search.criteria?._dataset_source === "manual") {
     return <span className="badge bg-violet-50 text-violet-700">Manual list</span>;
   }
-  return <span className="capitalize">{search.query_type === "people" ? "People" : "Companies"}</span>;
+  if (search.query_type === "organizations") {
+    return <span className="badge bg-rose-50 text-rose-700">Companies</span>;
+  }
+  return <span className="badge bg-ink-100 text-ink-700">People</span>;
 }
 
 function ResearchSearchRows({ node, depth, exportSearch, remove }) {
@@ -100,9 +97,6 @@ function ResearchSearchRows({ node, depth, exportSearch, remove }) {
         </td>
         <td className="table-td">
           <ResearchTypeBadge search={search} />
-        </td>
-        <td className="table-td">
-          <ResearchTagBadge search={search} />
         </td>
         <td className="table-td">
           {search.result_count}
@@ -158,7 +152,7 @@ export default function MarketResearch() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiPlanning, setAiPlanning] = useState(false);
   const [aiPlanSummary, setAiPlanSummary] = useState("");
-  const [recordsetTag, setRecordsetTag] = useState("");
+  const [aiPlan, setAiPlan] = useState(null);
 
   const disabled = !status?.enabled || !status?.configured;
   const activeFields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
@@ -185,7 +179,7 @@ export default function MarketResearch() {
       }
     }
     if (state.maxRecords) setMaxRecords(Number(state.maxRecords) || 500);
-    if (state.tag) setRecordsetTag(state.tag);
+    if (state.aiPlan) setAiPlan(state.aiPlan);
     setDrawer("apollo");
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate]);
@@ -222,22 +216,24 @@ export default function MarketResearch() {
     }
     setAiPlanning(true);
     setAiPlanSummary("");
+    setAiPlan(null);
     try {
       const { data } = await api.post("/ai/research/plan", { prompt: aiPrompt.trim() });
+      setAiPlan(data);
       setName(data.name);
       setMode(data.query_type === "people" ? "people" : "organizations");
       setMaxRecords(data.max_records);
-      const fields = data.query_type === "people" ? PEOPLE_FILTER_FIELDS : ORG_FILTER_FIELDS;
       if (data.query_type === "people") {
-        setPeopleFilters(criteriaToFilters(data.criteria, fields));
-      } else {
-        setOrgFilters(criteriaToFilters(data.criteria, fields));
+        setPeopleFilters(criteriaToFilters(data.criteria, PEOPLE_FILTER_FIELDS));
+      } else if (data.source !== "groq") {
+        setOrgFilters(criteriaToFilters(data.criteria, ORG_FILTER_FIELDS));
       }
       setAiPlanSummary(data.summary);
-      if (data.query_type === "organizations" && data.tag) {
-        setRecordsetTag(data.tag);
-      }
-      toast.success("Zoekplan klaar — controleer de filters en klik Run & save.");
+      const readyMsg =
+        data.source === "groq" && data.query_type === "organizations"
+          ? "Bedrijvenlijst klaar — controleer en klik Run & save."
+          : "Zoekplan klaar — controleer de filters en klik Run & save.";
+      toast.success(readyMsg);
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -251,28 +247,42 @@ export default function MarketResearch() {
       toast.info("Give your research a name first.");
       return;
     }
-    const creditNote =
-      mode === "organizations"
+    const groqOrgPlan = aiPlan?.source === "groq" && mode === "organizations";
+    const creditNote = groqOrgPlan
+      ? "Deze lijst komt van Groq (geen Apollo credits)."
+      : mode === "organizations"
         ? "Company searches use Apollo credits."
         : "People API Search does not consume credits, but results are stored locally.";
-    if (!confirm(`Run this search and capture up to ${maxRecords} records? ${creditNote}`)) return;
+    const confirmCount = groqOrgPlan ? aiPlan.companies?.length || maxRecords : maxRecords;
+    if (!confirm(`Run this search and capture up to ${confirmCount} records? ${creditNote}`)) return;
 
     setRunning(true);
     try {
-      const fields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
-      const filters = mode === "organizations" ? orgFilters : peopleFilters;
-      const { data } = await api.post("/research/searches", {
-        name: name.trim(),
-        query_type: mode,
-        criteria: buildCriteria(filters, fields),
-        max_records: Number(maxRecords),
-        ...(mode === "organizations" && recordsetTag.trim() ? { tag: recordsetTag.trim() } : {}),
-      });
+      let data;
+      if (groqOrgPlan) {
+        ({ data } = await api.post("/ai/research/create", {
+          name: name.trim(),
+          query_type: "organizations",
+          source: "groq",
+          companies: aiPlan.companies,
+          max_records: Number(maxRecords),
+          summary: aiPlan.summary,
+        }));
+      } else {
+        const fields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
+        const filters = mode === "organizations" ? orgFilters : peopleFilters;
+        ({ data } = await api.post("/research/searches", {
+          name: name.trim(),
+          query_type: mode,
+          criteria: buildCriteria(filters, fields),
+          max_records: Number(maxRecords),
+        }));
+      }
       toast.success(
         `Captured ${data.result_count} records${data.total_available ? ` (of ${data.total_available} available)` : ""}.`
       );
       setName("");
-      setRecordsetTag("");
+      setAiPlan(null);
       setOrgFilters(emptyFilters(ORG_FILTER_FIELDS));
       setPeopleFilters(emptyFilters(PEOPLE_FILTER_FIELDS));
       setDrawer(null);
@@ -389,7 +399,6 @@ export default function MarketResearch() {
                 <tr>
                   <th className="table-th">Name</th>
                   <th className="table-th">Type</th>
-                  <th className="table-th">Tag</th>
                   <th className="table-th">Records</th>
                   <th className="table-th">Created</th>
                   <th className="table-th"></th>
@@ -461,8 +470,10 @@ export default function MarketResearch() {
           </div>
 
           <div className="rounded-lg border border-ink-200 bg-ink-50/50 px-4 py-3 text-sm text-ink-600">
-            <Icon.Sparkles width={16} height={16} className="mb-1 inline text-brand-500" /> Company search uses credits;
-            people search does not. Results stay separate from your CRM.
+            <Icon.Sparkles width={16} height={16} className="mb-1 inline text-brand-500" />{" "}
+            {aiPlan?.source === "groq" && mode === "organizations"
+              ? "AI company lists use Groq (no Apollo credits). Manual Apollo filters still use credits."
+              : "Company search uses credits; people search does not. Results stay separate from your CRM."}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -482,19 +493,26 @@ export default function MarketResearch() {
             </button>
           </div>
 
-          <ApolloFilterForm fields={activeFields} values={activeFilters} onChange={setFilter} />
-
-          {mode === "organizations" ? (
-            <Field label="Tag">
-              <input
-                className="input"
-                placeholder="e.g. Energie, Fintech, SaaS"
-                value={recordsetTag}
-                onChange={(e) => setRecordsetTag(e.target.value)}
-                maxLength={80}
-              />
-            </Field>
-          ) : null}
+          {!(aiPlan?.source === "groq" && mode === "organizations") ? (
+            <ApolloFilterForm fields={activeFields} values={activeFilters} onChange={setFilter} />
+          ) : (
+            <div className="rounded-lg border border-ink-200 bg-white p-4">
+              <p className="mb-2 text-sm font-medium text-ink-800">
+                {aiPlan.companies?.length || 0} voorgestelde bedrijven
+              </p>
+              <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-ink-600">
+                {aiPlan.companies?.map((company) => (
+                  <li key={`${company.name}-${company.domain || ""}`}>
+                    {company.name}
+                    {company.domain ? <span className="text-ink-400"> · {company.domain}</span> : null}
+                    {company.employee_count ? (
+                      <span className="text-ink-400"> · ~{company.employee_count.toLocaleString()} medewerkers</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
             <Field label="Research name *">

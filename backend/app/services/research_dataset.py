@@ -20,6 +20,7 @@ from app.services.research_service import display_name, is_enriched
 
 DATASET_SOURCE_MANUAL = "manual"
 DATASET_SOURCE_APOLLO = "apollo"
+DATASET_SOURCE_GROQ = "groq"
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 
@@ -29,7 +30,10 @@ def dataset_source(search: ResearchSearch) -> str:
 
 
 def is_manual_company_dataset(search: ResearchSearch) -> bool:
-    return search.query_type == "organizations" and dataset_source(search) == DATASET_SOURCE_MANUAL
+    return search.query_type == "organizations" and dataset_source(search) in (
+        DATASET_SOURCE_MANUAL,
+        DATASET_SOURCE_GROQ,
+    )
 
 
 def _require_manual_company_dataset(search: ResearchSearch) -> None:
@@ -103,6 +107,81 @@ def create_manual_dataset(
         created_by=created_by,
     )
     db.add(search)
+    db.commit()
+    db.refresh(search)
+    return search
+
+
+def create_groq_company_dataset(
+    db: Session,
+    *,
+    name: str,
+    companies: list[dict[str, Any]],
+    created_by: int | None,
+    summary: str | None = None,
+) -> ResearchSearch:
+    """Create a company recordset from Groq-suggested companies (no Apollo credits)."""
+    criteria: dict[str, Any] = {"_dataset_source": DATASET_SOURCE_GROQ}
+    if summary:
+        criteria["_groq_summary"] = summary.strip()[:500]
+
+    search = ResearchSearch(
+        name=name.strip(),
+        query_type="organizations",
+        criteria=criteria,
+        result_count=0,
+        total_available=None,
+        created_by=created_by,
+    )
+    db.add(search)
+    db.flush()
+
+    seen: set[str] = set()
+    added = 0
+    for company in companies:
+        company_name = str(company.get("name") or "").strip()
+        if not company_name:
+            continue
+        domain = normalize_domain(company.get("domain"))
+        dedup_key = f"{company_name.lower()}|{domain or ''}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        employee_count = company.get("employee_count")
+        try:
+            employee_count = int(employee_count) if employee_count not in (None, "") else None
+        except (TypeError, ValueError):
+            employee_count = None
+
+        revenue = company.get("revenue")
+        try:
+            revenue = int(revenue) if revenue not in (None, "") else None
+        except (TypeError, ValueError):
+            revenue = None
+
+        raw = manual_org_raw_data(
+            name=company_name,
+            domain=domain,
+            industry=company.get("industry"),
+            country=normalize_country(company.get("country")),
+            city=company.get("city"),
+            employee_count=employee_count,
+            revenue=revenue,
+        )
+        raw["_research_source"] = "groq"
+        db.add(
+            ResearchResult(
+                search_id=search.id,
+                entity_type="company",
+                apollo_id=None,
+                name=display_name("organizations", raw),
+                raw_data=raw,
+            )
+        )
+        added += 1
+
+    search.result_count = added
     db.commit()
     db.refresh(search)
     return search

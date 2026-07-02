@@ -1,4 +1,4 @@
-"""Natural-language planning for Market Research recordsets (Apollo searches)."""
+"""Natural-language planning for Market Research recordsets."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.services.apollo_filters import normalize_search_payload
 from app.services.apollo_service import ApolloError, ApolloService
 from app.services.groq_service import GroqError, GroqService, _extract_json
+from app.services.research_dataset import create_groq_company_dataset
 from app.services.research_service import MAX_RECORDS_CAP, run_and_store
 
 ORG_CRITERIA_KEYS = {
@@ -90,52 +91,57 @@ FILTER_LABELS: dict[str, str] = {
     "person_seniorities": "Seniorities",
     "person_locations": "Person locations",
     "contact_email_status": "Email status",
-    "q_organization_name": "Employer name",
 }
 
 _CLASSIFIER_SYSTEM = (
     "Classify the user message for a CRM assistant.\n"
     '- "crm": questions about existing CRM data (companies/contacts counts, lists, filters).\n'
-    '- "research": requests to find NEW companies/people via Apollo and save as a Market Research recordset.\n'
+    '- "research": requests to find NEW companies/people and save as a Market Research recordset.\n'
     "Examples of research: 'top 20 energy companies', 'maak recordset van fintech bedrijven in NL', "
     "'zoek 50 sales directors in Germany'.\n"
     "Examples of crm: 'how many companies do we have', 'contacts without email'.\n"
     'Respond ONLY with minified JSON: {"intent":"crm"|"research","reason":string}'
 )
 
-_PLANNER_SYSTEM = (
-    "You plan Apollo Market Research recordsets for a B2B CRM. Translate the request into search filters.\n\n"
-    "query_type:\n"
-    '- "organizations" for company lists (default for industry/sector/company size requests)\n'
-    '- "people" for contact/person searches\n\n'
-    "criteria keys (organizations):\n"
-    "- organization_industries: list of keyword tags (e.g. energy, utilities, software, fintech)\n"
-    "- organization_locations: HQ locations (countries/regions, e.g. Netherlands, Germany)\n"
-    "- organization_not_locations: exclude locations\n"
-    "- organization_num_employees_ranges: list like [\"1001,5000\", \"5001,10000\"] for size bands\n"
-    "- q_organization_name: partial company name\n"
-    "- organization_domains: domain list\n"
-    "- revenue_range_min / revenue_range_max: integers USD\n"
-    "- organization_founded_year_range_min / max: year integers\n"
-    "- currently_using_any_of_technology_uids: e.g. salesforce, hubspot\n\n"
+_QUERY_TYPE_SYSTEM = (
+    "Classify a Market Research request.\n"
+    '- "organizations" for company/organization lists (default)\n'
+    '- "people" for contact/person searches (job titles, roles, seniorities)\n'
+    'Respond ONLY with minified JSON: {"query_type":"organizations"|"people"}'
+)
+
+_ORG_FINDER_SYSTEM = (
+    "You help build B2B company recordsets for a CRM. Given a user request, return a list of real "
+    "companies that match the criteria.\n\n"
+    "Rules:\n"
+    "- Prefer well-known, real companies in the requested region/industry.\n"
+    "- Include primary_domain when you know it (e.g. vattenfall.com), otherwise null.\n"
+    "- Include country, industry, and estimated employee_count when reasonable.\n"
+    "- When the user asks for top/largest/biggest N, sort by size and return exactly that many.\n"
+    "- Respect an explicit N in the request (default 20, max 200).\n"
+    "- name: short recordset title (max 80 chars).\n"
+    "- summary: 1-2 sentences in the user's language; mention data is AI-suggested and can be enriched later.\n"
+    "- needs_data: false only if the request is impossible.\n\n"
+    'Respond ONLY with minified JSON:\n'
+    '{"needs_data":boolean,"name":string,"max_records":number,"summary":string,'
+    '"companies":[{"name":string,"domain":string|null,"country":string|null,'
+    '"industry":string|null,"employee_count":number|null,"city":string|null}],'
+    '"reason":string|null}'
+)
+
+_PEOPLE_PLANNER_SYSTEM = (
+    "You plan Apollo Market Research people searches for a B2B CRM. Translate the request into search filters.\n\n"
     "criteria keys (people):\n"
     "- person_titles, person_seniorities, person_locations\n"
     "- organization_locations, organization_domains, q_organization_name\n"
     "- contact_email_status: verified, likely to engage, etc.\n\n"
-    "sort_by (organizations only, when user asks for largest/biggest/top N by size):\n"
-    '- "employee_count_desc" (default for grootste/grootste bedrijven/largest companies)\n'
-    '- "revenue_desc" when revenue/omzet is explicit\n'
-    "- null when order does not matter\n\n"
-    "max_records: how many rows to save (respect explicit N in the request, default 50, max 2000).\n"
+    "max_records: how many rows to save (respect explicit N, default 50, max 2000).\n"
     "name: short Dutch or English recordset title (max 80 chars).\n"
-    "tag: optional short category label for the recordset (e.g. Energie, Fintech, SaaS), max 40 chars; "
-    "null when unclear.\n"
-    "summary: 1-2 sentences in the user's language explaining what will be searched.\n"
+    "summary: 1-2 sentences in the user's language.\n"
     "needs_apollo: true unless the request is impossible.\n\n"
     'Respond ONLY with minified JSON:\n'
-    '{"needs_apollo":boolean,"name":string,"query_type":"organizations"|"people",'
-    '"criteria":object,"max_records":number,"sort_by":"employee_count_desc"|"revenue_desc"|null,'
-    '"tag":string|null,"summary":string,"reason":string|null}'
+    '{"needs_apollo":boolean,"name":string,"criteria":object,"max_records":number,'
+    '"summary":string,"reason":string|null}'
 )
 
 
@@ -157,6 +163,19 @@ def classify_intent(client: GroqService, prompt: str) -> str:
     parsed = _extract_json(content) or {}
     intent = str(parsed.get("intent") or "crm").strip().lower()
     return "research" if intent == "research" else "crm"
+
+
+def _classify_query_type(client: GroqService, prompt: str) -> str:
+    content = client.chat(
+        [
+            {"role": "system", "content": _QUERY_TYPE_SYSTEM},
+            {"role": "user", "content": prompt.strip()},
+        ],
+        temperature=0.0,
+    )
+    parsed = _extract_json(content) or {}
+    query_type = str(parsed.get("query_type") or "organizations").strip().lower()
+    return query_type if query_type in ("organizations", "people") else "organizations"
 
 
 def _allowed_keys(query_type: str) -> set[str]:
@@ -191,15 +210,105 @@ def _filter_preview(criteria: dict[str, Any]) -> list[dict[str, str]]:
     return preview
 
 
-def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
-    prompt = (prompt or "").strip()
-    if not prompt:
-        raise ResearchNlError("Describe what you want to research.")
+def _sanitize_companies(raw: Any, *, max_records: int) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    companies: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        domain = item.get("domain")
+        domain = str(domain).strip().lower() if domain not in (None, "") else None
+        if domain:
+            domain = domain.removeprefix("https://").removeprefix("http://").removeprefix("www.").split("/")[0]
 
+        dedup = f"{name.lower()}|{domain or ''}"
+        if dedup in seen:
+            continue
+        seen.add(dedup)
+
+        employee_count = item.get("employee_count")
+        try:
+            employee_count = int(employee_count) if employee_count not in (None, "") else None
+        except (TypeError, ValueError):
+            employee_count = None
+
+        companies.append(
+            {
+                "name": name[:255],
+                "domain": domain,
+                "country": str(item.get("country")).strip() if item.get("country") else None,
+                "industry": str(item.get("industry")).strip() if item.get("industry") else None,
+                "employee_count": employee_count,
+                "city": str(item.get("city")).strip() if item.get("city") else None,
+            }
+        )
+        if len(companies) >= max_records:
+            break
+    return companies
+
+
+def _plan_groq_companies(client: GroqService, prompt: str) -> dict[str, Any]:
     try:
         content = client.chat(
             [
-                {"role": "system", "content": _PLANNER_SYSTEM},
+                {"role": "system", "content": _ORG_FINDER_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+        )
+    except GroqError as exc:
+        raise ResearchNlError(exc.message, status_code=exc.status_code or 502) from exc
+
+    parsed = _extract_json(content) or {}
+    if not parsed.get("needs_data", True):
+        reason = parsed.get("reason") or parsed.get("summary") or "Could not find matching companies."
+        raise ResearchNlError(reason, status_code=400)
+
+    name = str(parsed.get("name") or "Market research").strip()[:255] or "Market research"
+
+    try:
+        max_records = int(parsed.get("max_records") or 20)
+    except (TypeError, ValueError):
+        max_records = 20
+    max_records = max(1, min(max_records, MAX_RECORDS_CAP))
+
+    companies = _sanitize_companies(parsed.get("companies"), max_records=max_records)
+    if not companies:
+        raise ResearchNlError(
+            "Could not derive a company list from your request. Try being more specific "
+            "(industry, country, or company size).",
+            status_code=400,
+        )
+
+    summary = (
+        str(parsed.get("summary") or "").strip()
+        or f"Groq-suggested list of {len(companies)} companies."
+    )
+
+    return {
+        "name": name,
+        "query_type": "organizations",
+        "source": "groq",
+        "criteria": {},
+        "companies": companies,
+        "max_records": len(companies),
+        "sort_by": None,
+        "summary": summary,
+        "filter_preview": [],
+        "uses_apollo_credits": False,
+    }
+
+
+def _plan_apollo_people(client: GroqService, prompt: str) -> dict[str, Any]:
+    try:
+        content = client.chat(
+            [
+                {"role": "system", "content": _PEOPLE_PLANNER_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
@@ -212,13 +321,7 @@ def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
         reason = parsed.get("reason") or parsed.get("summary") or "This request cannot be turned into an Apollo search."
         raise ResearchNlError(reason, status_code=400)
 
-    query_type = str(parsed.get("query_type") or "organizations").strip().lower()
-    if query_type not in ("organizations", "people"):
-        query_type = "organizations"
-
-    name = str(parsed.get("name") or "Market research").strip()[:255]
-    if not name:
-        name = "Market research"
+    name = str(parsed.get("name") or "Market research").strip()[:255] or "Market research"
 
     try:
         max_records = int(parsed.get("max_records") or 50)
@@ -226,17 +329,11 @@ def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
         max_records = 50
     max_records = max(1, min(max_records, MAX_RECORDS_CAP))
 
-    sort_by = parsed.get("sort_by")
-    if sort_by not in SORT_BY_VALUES:
-        sort_by = None
-    if query_type != "organizations":
-        sort_by = None
-
-    criteria = _sanitize_criteria(parsed.get("criteria"), query_type=query_type)
+    criteria = _sanitize_criteria(parsed.get("criteria"), query_type="people")
     if not criteria:
         raise ResearchNlError(
             "Could not derive Apollo filters from your request. Try being more specific "
-            "(industry, country, company size, or job titles).",
+            "(job titles, country, or company).",
             status_code=400,
         )
 
@@ -245,42 +342,78 @@ def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise ResearchNlError(f"Invalid search filters: {exc}", status_code=400) from exc
 
-    summary = str(parsed.get("summary") or "").strip() or f"Apollo {query_type} search with {max_records} records."
-
-    tag_raw = parsed.get("tag")
-    tag = str(tag_raw).strip()[:80] if tag_raw not in (None, "") else None
+    summary = str(parsed.get("summary") or "").strip() or f"Apollo people search with {max_records} records."
 
     return {
         "name": name,
-        "query_type": query_type,
+        "query_type": "people",
+        "source": "apollo",
         "criteria": criteria,
+        "companies": [],
         "max_records": max_records,
-        "sort_by": sort_by,
-        "tag": tag,
+        "sort_by": None,
         "summary": summary,
         "filter_preview": _filter_preview(criteria),
-        "uses_apollo_credits": query_type == "organizations",
+        "uses_apollo_credits": False,
     }
+
+
+def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise ResearchNlError("Describe what you want to research.")
+
+    try:
+        query_type = _classify_query_type(client, prompt)
+    except GroqError as exc:
+        raise ResearchNlError(exc.message, status_code=exc.status_code or 502) from exc
+
+    if query_type == "organizations":
+        return _plan_groq_companies(client, prompt)
+    return _plan_apollo_people(client, prompt)
 
 
 def create_research_from_plan(
     db: Session,
-    apollo_client: ApolloService,
+    apollo_client: ApolloService | None,
     *,
     name: str,
     query_type: str,
-    criteria: dict[str, Any],
+    source: str = "apollo",
+    criteria: dict[str, Any] | None = None,
+    companies: list[dict[str, Any]] | None = None,
     max_records: int,
     sort_by: str | None,
     created_by: int | None,
+    summary: str | None = None,
 ) -> Any:
     if query_type not in ("organizations", "people"):
         raise ResearchNlError("Unknown search type.", status_code=400)
 
-    clean_criteria = _sanitize_criteria(criteria, query_type=query_type)
-    tag = (criteria or {}).get("_recordset_tag")
-    if tag and str(tag).strip():
-        clean_criteria["_recordset_tag"] = str(tag).strip()[:80]
+    if query_type == "organizations" and source == "groq":
+        company_rows = companies or []
+        if not company_rows:
+            raise ResearchNlError("Company list is empty.", status_code=400)
+        try:
+            max_records = max(1, min(int(max_records), MAX_RECORDS_CAP))
+        except (TypeError, ValueError):
+            max_records = len(company_rows)
+        trimmed = company_rows[:max_records]
+        return create_groq_company_dataset(
+            db,
+            name=name.strip(),
+            companies=trimmed,
+            created_by=created_by,
+            summary=summary,
+        )
+
+    if not apollo_client:
+        raise ResearchNlError(
+            "Apollo is required for people searches. Enable Apollo in Settings.",
+            status_code=400,
+        )
+
+    clean_criteria = _sanitize_criteria(criteria or {}, query_type=query_type)
     if not clean_criteria:
         raise ResearchNlError("Search filters are empty.", status_code=400)
 

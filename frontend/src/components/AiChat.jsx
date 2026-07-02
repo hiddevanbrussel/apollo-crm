@@ -106,26 +106,32 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
         name: plan.name,
         prefilled: plan.criteria,
         maxRecords: plan.max_records,
-        tag: plan.tag,
+        aiPlan: plan.source === "groq" ? plan : null,
       },
     });
   };
 
   const create = async () => {
-    const creditNote = plan.uses_apollo_credits
-      ? "Company searches use Apollo credits."
-      : "People search does not consume Apollo credits.";
-    if (!confirm(`Recordset "${plan.name}" aanmaken met max ${plan.max_records} records? ${creditNote}`)) return;
+    const creditNote =
+      plan.source === "groq" && plan.query_type === "organizations"
+        ? "Deze lijst komt van Groq (geen Apollo credits)."
+        : plan.uses_apollo_credits
+          ? "Company searches use Apollo credits."
+          : "People search does not consume Apollo credits.";
+    const count = plan.source === "groq" ? plan.companies?.length || plan.max_records : plan.max_records;
+    if (!confirm(`Recordset "${plan.name}" aanmaken met ${count} records? ${creditNote}`)) return;
 
     setCreating(true);
     try {
       const { data } = await api.post("/ai/research/create", {
         name: plan.name,
         query_type: plan.query_type,
+        source: plan.source,
         criteria: plan.criteria,
+        companies: plan.companies,
         max_records: plan.max_records,
         sort_by: plan.sort_by,
-        ...(plan.tag ? { tag: plan.tag } : {}),
+        summary: plan.summary,
       });
       toast.success(`Recordset aangemaakt met ${data.result_count} records.`);
       navigate(`/research/${data.id}`);
@@ -140,12 +146,24 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
     <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/40 p-3 text-xs">
       <p className="font-semibold text-ink-900">{plan.name}</p>
       <p className="mt-1 text-ink-600">
-        {plan.query_type === "people" ? "People" : "Companies"} · max {plan.max_records} records
-        {plan.tag ? ` · tag: ${plan.tag}` : null}
+        {plan.query_type === "people" ? "People" : "Companies"} · {plan.max_records} records
+        {plan.source === "groq" ? " · via Groq" : plan.uses_apollo_credits ? " · via Apollo" : null}
         {plan.sort_by === "employee_count_desc" ? " · gesorteerd op medewerkers" : null}
         {plan.sort_by === "revenue_desc" ? " · gesorteerd op omzet" : null}
       </p>
-      {plan.filter_preview?.length ? (
+      {plan.companies?.length ? (
+        <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto text-ink-600">
+          {plan.companies.slice(0, 15).map((company) => (
+            <li key={`${company.name}-${company.domain || ""}`}>
+              {company.name}
+              {company.domain ? <span className="text-ink-400"> · {company.domain}</span> : null}
+            </li>
+          ))}
+          {plan.companies.length > 15 ? (
+            <li className="text-ink-400">… en {plan.companies.length - 15} meer</li>
+          ) : null}
+        </ul>
+      ) : plan.filter_preview?.length ? (
         <ul className="mt-2 space-y-1 text-ink-600">
           {plan.filter_preview.map((f) => (
             <li key={f.key}>
@@ -160,7 +178,7 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
           Maak recordset
         </button>
         <button type="button" className="btn-secondary px-2.5 py-1 text-xs" onClick={review} disabled={creating}>
-          Bekijk filters
+          {plan.source === "groq" ? "Bekijk bedrijven" : "Bekijk filters"}
         </button>
       </div>
     </div>

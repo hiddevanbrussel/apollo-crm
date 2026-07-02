@@ -606,8 +606,9 @@ export default function ResearchDetail() {
   const isOrg = search?.query_type === "organizations";
   const isManualDataset = search?.criteria?._dataset_source === "manual";
   const sourceSearchId = search?.criteria?._source_search_id;
+  const isGroqCompanyDataset = isOrg && search?.criteria?._dataset_source === "groq";
   const isManualContactDataset = !isOrg && isManualDataset && !!sourceSearchId;
-  const isManualCompanyDataset = isOrg && isManualDataset;
+  const isManualCompanyDataset = isOrg && (isManualDataset || isGroqCompanyDataset);
   const columns = isOrg ? ORG_COLUMNS : PEOPLE_COLUMNS;
   const sourceSearchName = search?.criteria?._source_search_name;
   const sourceCompanyResultId = search?.criteria?._source_company_result_id;

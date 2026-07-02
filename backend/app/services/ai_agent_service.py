@@ -198,11 +198,12 @@ def ask(client: GroqService, question: str) -> dict[str, Any]:
         elif plan.get("sort_by") == "revenue_desc":
             sort_note = " Results worden gesorteerd op omzet (hoogste eerst)."
 
-        credit_note = (
-            " Deze zoekactie verbruikt Apollo credits."
-            if plan.get("uses_apollo_credits")
-            else " People search verbruikt geen Apollo credits."
-        )
+        if plan.get("source") == "groq" and plan.get("query_type") == "organizations":
+            credit_note = " Deze lijst komt van Groq (geen Apollo credits). Je kunt bedrijven later verrijken via Apollo."
+        elif plan.get("uses_apollo_credits"):
+            credit_note = " Deze zoekactie verbruikt Apollo credits."
+        else:
+            credit_note = " People search verbruikt geen Apollo credits."
 
         return {
             "answer": f"{plan['summary']}{sort_note}{credit_note}\n\nBevestig hieronder om de recordset aan te maken.",
