@@ -106,6 +106,7 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
         name: plan.name,
         prefilled: plan.criteria,
         maxRecords: plan.max_records,
+        tag: plan.tag,
       },
     });
   };
@@ -124,6 +125,7 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
         criteria: plan.criteria,
         max_records: plan.max_records,
         sort_by: plan.sort_by,
+        ...(plan.tag ? { tag: plan.tag } : {}),
       });
       toast.success(`Recordset aangemaakt met ${data.result_count} records.`);
       navigate(`/research/${data.id}`);
@@ -139,6 +141,7 @@ function ResearchPlanCard({ plan, creating, setCreating }) {
       <p className="font-semibold text-ink-900">{plan.name}</p>
       <p className="mt-1 text-ink-600">
         {plan.query_type === "people" ? "People" : "Companies"} · max {plan.max_records} records
+        {plan.tag ? ` · tag: ${plan.tag}` : null}
         {plan.sort_by === "employee_count_desc" ? " · gesorteerd op medewerkers" : null}
         {plan.sort_by === "revenue_desc" ? " · gesorteerd op omzet" : null}
       </p>

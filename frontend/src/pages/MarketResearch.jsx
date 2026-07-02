@@ -43,6 +43,12 @@ function buildResearchTree(searches) {
   return roots;
 }
 
+function ResearchTagBadge({ search }) {
+  const tag = search.criteria?._recordset_tag;
+  if (!tag) return <span className="text-ink-300">—</span>;
+  return <span className="badge bg-amber-50 text-amber-800">{tag}</span>;
+}
+
 function ResearchTypeBadge({ search }) {
   if (
     search.criteria?._dataset_source === "manual" &&
@@ -94,6 +100,9 @@ function ResearchSearchRows({ node, depth, exportSearch, remove }) {
         </td>
         <td className="table-td">
           <ResearchTypeBadge search={search} />
+        </td>
+        <td className="table-td">
+          <ResearchTagBadge search={search} />
         </td>
         <td className="table-td">
           {search.result_count}
@@ -149,6 +158,7 @@ export default function MarketResearch() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiPlanning, setAiPlanning] = useState(false);
   const [aiPlanSummary, setAiPlanSummary] = useState("");
+  const [recordsetTag, setRecordsetTag] = useState("");
 
   const disabled = !status?.enabled || !status?.configured;
   const activeFields = mode === "organizations" ? ORG_FILTER_FIELDS : PEOPLE_FILTER_FIELDS;
@@ -175,6 +185,7 @@ export default function MarketResearch() {
       }
     }
     if (state.maxRecords) setMaxRecords(Number(state.maxRecords) || 500);
+    if (state.tag) setRecordsetTag(state.tag);
     setDrawer("apollo");
     navigate(location.pathname, { replace: true, state: null });
   }, [location, navigate]);
@@ -223,6 +234,9 @@ export default function MarketResearch() {
         setOrgFilters(criteriaToFilters(data.criteria, fields));
       }
       setAiPlanSummary(data.summary);
+      if (data.query_type === "organizations" && data.tag) {
+        setRecordsetTag(data.tag);
+      }
       toast.success("Zoekplan klaar — controleer de filters en klik Run & save.");
     } catch (err) {
       toast.error(apiError(err));
@@ -252,11 +266,13 @@ export default function MarketResearch() {
         query_type: mode,
         criteria: buildCriteria(filters, fields),
         max_records: Number(maxRecords),
+        ...(mode === "organizations" && recordsetTag.trim() ? { tag: recordsetTag.trim() } : {}),
       });
       toast.success(
         `Captured ${data.result_count} records${data.total_available ? ` (of ${data.total_available} available)` : ""}.`
       );
       setName("");
+      setRecordsetTag("");
       setOrgFilters(emptyFilters(ORG_FILTER_FIELDS));
       setPeopleFilters(emptyFilters(PEOPLE_FILTER_FIELDS));
       setDrawer(null);
@@ -373,6 +389,7 @@ export default function MarketResearch() {
                 <tr>
                   <th className="table-th">Name</th>
                   <th className="table-th">Type</th>
+                  <th className="table-th">Tag</th>
                   <th className="table-th">Records</th>
                   <th className="table-th">Created</th>
                   <th className="table-th"></th>
@@ -466,6 +483,18 @@ export default function MarketResearch() {
           </div>
 
           <ApolloFilterForm fields={activeFields} values={activeFilters} onChange={setFilter} />
+
+          {mode === "organizations" ? (
+            <Field label="Tag">
+              <input
+                className="input"
+                placeholder="e.g. Energie, Fintech, SaaS"
+                value={recordsetTag}
+                onChange={(e) => setRecordsetTag(e.target.value)}
+                maxLength={80}
+              />
+            </Field>
+          ) : null}
 
           <div className="grid grid-cols-1 gap-4 border-t border-ink-100 pt-4 sm:grid-cols-2">
             <Field label="Research name *">

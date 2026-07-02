@@ -107,13 +107,16 @@ def ai_research_create(
     _groq_ready(db)
     _ensure_apollo_enabled(db)
     apollo = build_client(db)
+    criteria = dict(payload.criteria or {})
+    if payload.tag and payload.tag.strip():
+        criteria["_recordset_tag"] = payload.tag.strip()
     try:
         search = create_research_from_plan(
             db,
             apollo,
             name=payload.name,
             query_type=payload.query_type,
-            criteria=payload.criteria,
+            criteria=criteria,
             max_records=payload.max_records,
             sort_by=payload.sort_by,
             created_by=user.id,

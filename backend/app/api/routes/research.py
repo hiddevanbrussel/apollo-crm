@@ -94,13 +94,16 @@ def create_search(
         raise HTTPException(status_code=400, detail="query_type must be 'people' or 'organizations'.")
     _ensure_apollo_enabled(db)
     client = build_client(db)
+    criteria = dict(payload.criteria or {})
+    if payload.tag and payload.tag.strip():
+        criteria["_recordset_tag"] = payload.tag.strip()
     try:
         search = research_service.run_and_store(
             db,
             client,
             name=payload.name.strip(),
             query_type=payload.query_type,
-            criteria=payload.criteria,
+            criteria=criteria,
             max_records=payload.max_records,
             created_by=user.id,
         )

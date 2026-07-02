@@ -128,12 +128,14 @@ _PLANNER_SYSTEM = (
     "- null when order does not matter\n\n"
     "max_records: how many rows to save (respect explicit N in the request, default 50, max 2000).\n"
     "name: short Dutch or English recordset title (max 80 chars).\n"
+    "tag: optional short category label for the recordset (e.g. Energie, Fintech, SaaS), max 40 chars; "
+    "null when unclear.\n"
     "summary: 1-2 sentences in the user's language explaining what will be searched.\n"
     "needs_apollo: true unless the request is impossible.\n\n"
     'Respond ONLY with minified JSON:\n'
     '{"needs_apollo":boolean,"name":string,"query_type":"organizations"|"people",'
     '"criteria":object,"max_records":number,"sort_by":"employee_count_desc"|"revenue_desc"|null,'
-    '"summary":string,"reason":string|null}'
+    '"tag":string|null,"summary":string,"reason":string|null}'
 )
 
 
@@ -245,12 +247,16 @@ def plan_research(client: GroqService, prompt: str) -> dict[str, Any]:
 
     summary = str(parsed.get("summary") or "").strip() or f"Apollo {query_type} search with {max_records} records."
 
+    tag_raw = parsed.get("tag")
+    tag = str(tag_raw).strip()[:80] if tag_raw not in (None, "") else None
+
     return {
         "name": name,
         "query_type": query_type,
         "criteria": criteria,
         "max_records": max_records,
         "sort_by": sort_by,
+        "tag": tag,
         "summary": summary,
         "filter_preview": _filter_preview(criteria),
         "uses_apollo_credits": query_type == "organizations",
@@ -272,6 +278,9 @@ def create_research_from_plan(
         raise ResearchNlError("Unknown search type.", status_code=400)
 
     clean_criteria = _sanitize_criteria(criteria, query_type=query_type)
+    tag = (criteria or {}).get("_recordset_tag")
+    if tag and str(tag).strip():
+        clean_criteria["_recordset_tag"] = str(tag).strip()[:80]
     if not clean_criteria:
         raise ResearchNlError("Search filters are empty.", status_code=400)
 

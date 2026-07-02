@@ -19,6 +19,7 @@ class ResearchPlanOut(BaseModel):
     criteria: dict[str, Any] = {}
     max_records: int = 50
     sort_by: str | None = None
+    tag: str | None = None
     summary: str
     filter_preview: list[ResearchFilterPreview] = []
     uses_apollo_credits: bool = True
@@ -34,6 +35,7 @@ class ResearchCreateFromPlan(BaseModel):
     criteria: dict[str, Any] = {}
     max_records: int = Field(default=50, ge=1, le=2000)
     sort_by: str | None = None
+    tag: str | None = Field(default=None, max_length=80)
 
 
 class AskResponse(BaseModel):

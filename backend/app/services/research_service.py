@@ -151,7 +151,8 @@ def _collect_from_apollo(
     page = 1
 
     while len(collected) < max_records:
-        payload = normalize_search_payload(criteria)
+        apollo_criteria = {k: v for k, v in (criteria or {}).items() if not str(k).startswith("_")}
+        payload = normalize_search_payload(apollo_criteria)
         payload = {k: v for k, v in payload.items() if v not in (None, "", [])}
         payload["page"] = page
         payload["per_page"] = per_page
