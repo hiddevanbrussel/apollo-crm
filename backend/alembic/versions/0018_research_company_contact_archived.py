@@ -1,6 +1,6 @@
 """archive research company contacts
 
-Revision ID: 0018_research_company_contact_archived
+Revision ID: 0018_vault_contact_archive
 Revises: 0017_research_company_contacts
 Create Date: 2026-06-25
 
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0018_research_company_contact_archived"
+revision: str = "0018_vault_contact_archive"
 down_revision: Union[str, None] = "0017_research_company_contacts"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -19,6 +19,17 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+
+    # Default alembic_version.version_num is VARCHAR(32); widen for longer revision ids.
+    if "alembic_version" in inspector.get_table_names():
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=64),
+            existing_nullable=False,
+        )
+
     if "research_company_contacts" not in inspector.get_table_names():
         return
 
